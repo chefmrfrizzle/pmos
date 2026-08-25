@@ -1,0 +1,17 @@
+weights:
+  capital_access: 0.20
+  asset_access: 0.15
+  network_leverage: 0.20
+  private_asset_fit: 0.15
+  engagement_probability: 0.10
+  immediate_value_fit: 0.15
+  evidence_confidence: 0.05
+
+source_confidence:
+  official: 1.0
+  regulator: 0.95
+  official_filing: 0.95
+  institutional_report: 0.85
+  reputable_media: 0.70
+  directory: 0.55
+  unknown: 0.30

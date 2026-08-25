@@ -1,0 +1,201 @@
+universes:
+  sovereign_wealth:
+    label: Sovereign Wealth & State Investment
+    entities:
+      - {name: Abu Dhabi Investment Authority, country: AE, city: Abu Dhabi, url: https://www.adia.ae/}
+      - {name: Mubadala Investment Company, country: AE, city: Abu Dhabi, url: https://www.mubadala.com/}
+      - {name: ADQ, country: AE, city: Abu Dhabi, url: https://www.adq.ae/}
+      - {name: Emirates Investment Authority, country: AE, city: Abu Dhabi, url: https://www.eia.gov.ae/}
+      - {name: Investment Corporation of Dubai, country: AE, city: Dubai, url: https://www.icd.gov.ae/}
+      - {name: Dubai Holding, country: AE, city: Dubai, url: https://www.dubaiholding.com/}
+      - {name: Public Investment Fund, country: SA, city: Riyadh, url: https://www.pif.gov.sa/}
+      - {name: Sanabil Investments, country: SA, city: Riyadh, url: https://sanabil.com/}
+      - {name: Qatar Investment Authority, country: QA, city: Doha, url: https://www.qia.qa/}
+      - {name: Kuwait Investment Authority, country: KW, city: Kuwait City, url: https://www.kia.gov.kw/}
+      - {name: Mumtalakat, country: BH, city: Manama, url: https://www.mumtalakat.bh/}
+      - {name: Oman Investment Authority, country: OM, city: Muscat, url: https://www.oia.gov.om/}
+      - {name: GIC, country: SG, city: Singapore, url: https://www.gic.com.sg/}
+      - {name: Temasek, country: SG, city: Singapore, url: https://www.temasek.com.sg/}
+      - {name: China Investment Corporation, country: CN, city: Beijing, url: https://www.china-inv.cn/}
+      - {name: Hong Kong Monetary Authority, country: HK, city: Hong Kong, url: https://www.hkma.gov.hk/}
+      - {name: Korea Investment Corporation, country: KR, city: Seoul, url: https://www.kic.kr/}
+      - {name: Future Fund, country: AU, city: Melbourne, url: https://www.futurefund.gov.au/}
+      - {name: Norges Bank Investment Management, country: NO, city: Oslo, url: https://www.nbim.no/}
+      - {name: Ireland Strategic Investment Fund, country: IE, city: Dublin, url: https://isif.ie/}
+      - {name: New Zealand Superannuation Fund, country: NZ, city: Auckland, url: https://nzsuperfund.nz/}
+      - {name: Alaska Permanent Fund Corporation, country: US, city: Juneau, url: https://apfc.org/}
+
+  pensions:
+    label: Pension & Superannuation Funds
+    entities:
+      - {name: CPP Investments, country: CA, city: Toronto, url: https://www.cppinvestments.com/}
+      - {name: Ontario Teachers' Pension Plan, country: CA, city: Toronto, url: https://www.otpp.com/}
+      - {name: OMERS, country: CA, city: Toronto, url: https://www.omers.com/}
+      - {name: PSP Investments, country: CA, city: Ottawa, url: https://www.investpsp.com/}
+      - {name: CDPQ, country: CA, city: Montreal, url: https://www.lacaisse.com/}
+      - {name: BCI, country: CA, city: Victoria, url: https://www.bci.ca/}
+      - {name: AIMCo, country: CA, city: Edmonton, url: https://www.aimco.ca/}
+      - {name: HOOPP, country: CA, city: Toronto, url: https://hoopp.com/}
+      - {name: OPTrust, country: CA, city: Toronto, url: https://www.optrust.com/}
+      - {name: CalPERS, country: US, city: Sacramento, url: https://www.calpers.ca.gov/}
+      - {name: CalSTRS, country: US, city: West Sacramento, url: https://www.calstrs.com/}
+      - {name: New York State Common Retirement Fund, country: US, city: Albany, url: https://www.osc.ny.gov/common-retirement-fund}
+      - {name: Washington State Investment Board, country: US, city: Olympia, url: https://www.sib.wa.gov/}
+      - {name: AustralianSuper, country: AU, city: Melbourne, url: https://www.australiansuper.com/}
+      - {name: Australian Retirement Trust, country: AU, city: Brisbane, url: https://www.australianretirementtrust.com.au/}
+      - {name: Aware Super, country: AU, city: Sydney, url: https://aware.com.au/}
+      - {name: APG, country: NL, city: Heerlen, url: https://apg.nl/}
+      - {name: PGGM, country: NL, city: Zeist, url: https://www.pggm.nl/}
+      - {name: ATP, country: DK, city: Hillerod, url: https://www.atp.dk/}
+      - {name: Universities Superannuation Scheme, country: GB, city: Liverpool, url: https://www.uss.co.uk/}
+      - {name: GPIF, country: JP, city: Tokyo, url: https://www.gpif.go.jp/en/}
+      - {name: National Pension Service, country: KR, city: Jeonju, url: https://www.nps.or.kr/}
+
+  private_banks:
+    label: Private Banks & UHNW
+    entities:
+      - {name: UBS Global Wealth Management, country: CH, city: Zurich, url: https://www.ubs.com/}
+      - {name: LGT, country: LI, city: Vaduz, url: https://www.lgt.com/}
+      - {name: Pictet, country: CH, city: Geneva, url: https://www.pictet.com/}
+      - {name: Lombard Odier, country: CH, city: Geneva, url: https://www.lombardodier.com/}
+      - {name: Julius Baer, country: CH, city: Zurich, url: https://www.juliusbaer.com/}
+      - {name: Vontobel, country: CH, city: Zurich, url: https://www.vontobel.com/}
+      - {name: EFG International, country: CH, city: Zurich, url: https://www.efginternational.com/}
+      - {name: J. Safra Sarasin, country: CH, city: Basel, url: https://www.jsafrasarasin.com/}
+      - {name: J.P. Morgan Private Bank, country: US, city: New York, url: https://privatebank.jpmorgan.com/}
+      - {name: Goldman Sachs Private Wealth Management, country: US, city: New York, url: https://www.goldmansachs.com/what-we-do/wealth-management/}
+      - {name: Morgan Stanley Private Wealth Management, country: US, city: New York, url: https://www.morganstanley.com/what-we-do/wealth-management}
+      - {name: Citi Private Bank, country: US, city: New York, url: https://www.privatebank.citibank.com/}
+      - {name: Bank of America Private Bank, country: US, city: New York, url: https://www.privatebank.bankofamerica.com/}
+      - {name: Northern Trust Wealth Management, country: US, city: Chicago, url: https://www.northerntrust.com/}
+      - {name: Rothschild & Co Wealth Management, country: GB, city: London, url: https://www.rothschildandco.com/}
+      - {name: Coutts, country: GB, city: London, url: https://www.coutts.com/}
+      - {name: C. Hoare & Co., country: GB, city: London, url: https://www.hoaresbank.co.uk/}
+      - {name: BNP Paribas Wealth Management, country: FR, city: Paris, url: https://wealthmanagement.bnpparibas/}
+      - {name: HSBC Global Private Banking, country: GB, city: London, url: https://www.privatebanking.hsbc.com/}
+      - {name: Standard Chartered Private Bank, country: SG, city: Singapore, url: https://www.sc.com/en/banking/private/}
+      - {name: Bank of Singapore, country: SG, city: Singapore, url: https://www.bankofsingapore.com/}
+      - {name: DBS Private Bank, country: SG, city: Singapore, url: https://www.dbs.com.sg/private-banking/}
+
+  multifamily_offices:
+    label: Multi-Family Offices
+    entities:
+      - {name: Stonehage Fleming, country: GB, city: London, url: https://www.stonehagefleming.com/}
+      - {name: AlTi Tiedemann Global, country: US, city: New York, url: https://alti-global.com/}
+      - {name: Pathstone, country: US, city: Englewood, url: https://www.pathstone.com/}
+      - {name: Bessemer Trust, country: US, city: New York, url: https://www.bessemertrust.com/}
+      - {name: Rockefeller Capital Management, country: US, city: New York, url: https://www.rockco.com/}
+      - {name: Pitcairn, country: US, city: Jenkintown, url: https://www.pitcairn.com/}
+      - {name: Glenmede, country: US, city: Philadelphia, url: https://www.glenmede.com/}
+      - {name: WE Family Offices, country: US, city: Miami, url: https://www.wefamilyoffices.com/}
+      - {name: Ballentine Partners, country: US, city: Waltham, url: https://ballentinepartners.com/}
+
+  family_office_networks:
+    label: Family Office & UHNW Networks
+    entities:
+      - {name: Campden Wealth, country: GB, city: London, url: https://www.campdenwealth.com/}
+      - {name: Family Office Exchange, country: US, city: Chicago, url: https://www.familyoffice.com/}
+      - {name: TIGER 21, country: US, city: New York, url: https://tiger21.com/}
+      - {name: Institute for Private Investors, country: US, city: New York, url: https://www.memberlink.net/}
+      - {name: YPO, country: US, city: Irving, url: https://www.ypo.org/}
+
+  fiduciary:
+    label: Trust, Estate & Fiduciary
+    entities:
+      - {name: STEP, country: GB, city: London, url: https://www.step.org/}
+      - {name: IQ-EQ, country: LU, city: Luxembourg, url: https://iqeq.com/}
+      - {name: JTC, country: JE, city: St Helier, url: https://www.jtcgroup.com/}
+      - {name: Ocorian, country: JE, city: St Helier, url: https://www.ocorian.com/}
+      - {name: Vistra, country: HK, city: Hong Kong, url: https://www.vistra.com/}
+      - {name: Trident Trust, country: VG, city: Road Town, url: https://www.tridenttrust.com/}
+      - {name: ZEDRA, country: CH, city: Geneva, url: https://www.zedra.com/}
+      - {name: Praxis, country: GG, city: St Peter Port, url: https://www.praxisgroup.com/}
+      - {name: Butterfield Trust, country: BM, city: Hamilton, url: https://www.butterfieldgroup.com/}
+      - {name: Rawlinson & Hunter, country: GB, city: London, url: https://www.rawlinson-hunter.com/}
+
+  endowments_foundations:
+    label: Foundations & Endowments
+    entities:
+      - {name: Harvard Management Company, country: US, city: Boston, url: https://www.hmc.harvard.edu/}
+      - {name: Yale Investments Office, country: US, city: New Haven, url: https://investments.yale.edu/}
+      - {name: Stanford Management Company, country: US, city: Stanford, url: https://smc.stanford.edu/}
+      - {name: MIT Investment Management Company, country: US, city: Cambridge, url: https://mitimco.org/}
+      - {name: Princeton University Investment Company, country: US, city: Princeton, url: https://princo.princeton.edu/}
+      - {name: Wellcome Trust, country: GB, city: London, url: https://wellcome.org/}
+      - {name: Ford Foundation, country: US, city: New York, url: https://www.fordfoundation.org/}
+      - {name: Rockefeller Foundation, country: US, city: New York, url: https://www.rockefellerfoundation.org/}
+      - {name: Gates Foundation, country: US, city: Seattle, url: https://www.gatesfoundation.org/}
+      - {name: Howard Hughes Medical Institute, country: US, city: Chevy Chase, url: https://www.hhmi.org/}
+
+  auction_private_sales:
+    label: Auction Houses & Private Sales
+    entities:
+      - {name: Sotheby's, country: US, city: New York, url: https://www.sothebys.com/}
+      - {name: Christie's, country: GB, city: London, url: https://www.christies.com/}
+      - {name: Phillips, country: GB, city: London, url: https://www.phillips.com/}
+      - {name: Bonhams, country: GB, city: London, url: https://www.bonhams.com/}
+
+  art_fairs:
+    label: Art Fairs & Collector Networks
+    entities:
+      - {name: Art Basel, country: CH, city: Basel, url: https://www.artbasel.com/}
+      - {name: TEFAF, country: NL, city: Maastricht, url: https://www.tefaf.com/}
+      - {name: Frieze, country: GB, city: London, url: https://www.frieze.com/}
+
+  mega_galleries:
+    label: Major Galleries & Dealers
+    entities:
+      - {name: Gagosian, country: US, city: New York, url: https://gagosian.com/}
+      - {name: Hauser & Wirth, country: CH, city: Zurich, url: https://www.hauserwirth.com/}
+      - {name: Pace Gallery, country: US, city: New York, url: https://www.pacegallery.com/}
+      - {name: David Zwirner, country: US, city: New York, url: https://www.davidzwirner.com/}
+      - {name: White Cube, country: GB, city: London, url: https://www.whitecube.com/}
+      - {name: Perrotin, country: FR, city: Paris, url: https://www.perrotin.com/}
+      - {name: Thaddaeus Ropac, country: AT, city: Salzburg, url: https://ropac.net/}
+      - {name: Lisson Gallery, country: GB, city: London, url: https://www.lissongallery.com/}
+      - {name: Lehmann Maupin, country: US, city: New York, url: https://www.lehmannmaupin.com/}
+
+  insurance:
+    label: Insurance
+    entities:
+      - {name: Chubb, country: CH, city: Zurich, url: https://www.chubb.com/}
+      - {name: AIG, country: US, city: New York, url: https://www.aig.com/}
+      - {name: AXA XL, country: US, city: Stamford, url: https://axaxl.com/}
+      - {name: Allianz Commercial, country: DE, city: Munich, url: https://commercial.allianz.com/}
+      - {name: Zurich Insurance Group, country: CH, city: Zurich, url: https://www.zurich.com/}
+      - {name: Hiscox, country: GB, city: London, url: https://www.hiscoxgroup.com/}
+      - {name: Tokio Marine, country: JP, city: Tokyo, url: https://www.tokiomarinehd.com/en/}
+      - {name: Liberty Specialty Markets, country: GB, city: London, url: https://www.libertyspecialtymarkets.com/}
+
+  reinsurance:
+    label: Reinsurance
+    entities:
+      - {name: Swiss Re, country: CH, city: Zurich, url: https://www.swissre.com/}
+      - {name: Munich Re, country: DE, city: Munich, url: https://www.munichre.com/}
+      - {name: Hannover Re, country: DE, city: Hannover, url: https://www.hannover-re.com/}
+      - {name: SCOR, country: FR, city: Paris, url: https://www.scor.com/}
+      - {name: RenaissanceRe, country: BM, city: Pembroke, url: https://www.renre.com/}
+      - {name: Everest Group, country: BM, city: Hamilton, url: https://www.everestglobal.com/}
+      - {name: PartnerRe, country: BM, city: Pembroke, url: https://www.partnerre.com/}
+      - {name: Arch Capital Group, country: BM, city: Pembroke, url: https://www.archgroup.com/}
+
+  brokers:
+    label: Insurance & Reinsurance Brokers
+    entities:
+      - {name: Marsh, country: US, city: New York, url: https://www.marsh.com/}
+      - {name: Aon, country: GB, city: London, url: https://www.aon.com/}
+      - {name: WTW, country: GB, city: London, url: https://www.wtwco.com/}
+      - {name: Gallagher, country: US, city: Rolling Meadows, url: https://www.ajg.com/}
+      - {name: Howden, country: GB, city: London, url: https://www.howdengroup.com/}
+
+  asset_servicing:
+    label: Custody, Administration & Asset Servicing
+    entities:
+      - {name: BNY, country: US, city: New York, url: https://www.bny.com/}
+      - {name: State Street, country: US, city: Boston, url: https://www.statestreet.com/}
+      - {name: Northern Trust, country: US, city: Chicago, url: https://www.northerntrust.com/}
+      - {name: Citi Securities Services, country: US, city: New York, url: https://www.citigroup.com/}
+      - {name: J.P. Morgan Securities Services, country: US, city: New York, url: https://www.jpmorgan.com/}
+      - {name: Apex Group, country: BM, city: Hamilton, url: https://www.apexgroup.com/}
+      - {name: Alter Domus, country: LU, city: Luxembourg, url: https://alterdomus.com/}
+      - {name: Citco, country: KY, city: George Town, url: https://www.citco.com/}
