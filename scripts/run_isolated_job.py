@@ -15,6 +15,7 @@ JOBS={
     "source-discovery":"discover_case_sources.py",
     "source-retrieval":"retrieve_source_candidates.py",
     "pdf-requeue":"requeue_pdf_candidates.py",
+    "source-reverification":"reverify_sources.py",
     "identity-audit":"audit_identity_matches.py",
     "lei-research":"research_lei_candidates.py",
     "ledger-verify":"verify_audit_ledger.py",

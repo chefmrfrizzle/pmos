@@ -208,6 +208,31 @@ class ResearchDocumentSnapshot(Base):
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("source_candidate_id", "text_hash", name="uq_candidate_document_snapshot"),)
 
+class SourceChangeEvent(Base):
+    __tablename__ = "source_change_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_candidate_id: Mapped[int] = mapped_column(ForeignKey("research_source_candidates.id"), index=True)
+    prior_snapshot_id: Mapped[int] = mapped_column(ForeignKey("research_document_snapshots.id"), index=True)
+    resulting_snapshot_id: Mapped[int] = mapped_column(ForeignKey("research_document_snapshots.id"), index=True)
+    prior_hash: Mapped[str] = mapped_column(String(64))
+    resulting_hash: Mapped[str] = mapped_column(String(64))
+    similarity: Mapped[float] = mapped_column(Float)
+    added_token_count: Mapped[int] = mapped_column(Integer, default=0)
+    removed_token_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(40), index=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class SourceChangeReviewEvent(Base):
+    __tablename__ = "source_change_review_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    change_event_id: Mapped[int] = mapped_column(ForeignKey("source_change_events.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class ResearchPassageCandidate(Base):
     __tablename__ = "research_passage_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)

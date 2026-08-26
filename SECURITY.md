@@ -35,6 +35,8 @@ Source discovery remains same-domain, strips fragments/tracking parameters, reje
 
 PDF handling never executes embedded scripts, attachments, links, or actions. Parsing runs in a sanitized, resource-limited subprocess with byte, page, text, output, CPU, and wall-clock limits. Encrypted PDFs, invalid signatures, excessive pages, extraction failures, and image-only documents fail closed into distinct review states. A production research tier must additionally place the parser inside a hardened sandbox/container with memory and system-call controls.
 
+Reverification preserves the last known snapshot and status when retrieval fails. Successful comparisons store hashes and bounded metrics; exact changed text is available only through the authenticated, universe-scoped private review API. Change acknowledgement cannot mutate claims or complete diligence procedures, preventing source drift from silently rewriting institutional history.
+
 Passage review is private-by-default, role/action authorized, universe-scoped, and audited. The API never accepts a free-standing machine assertion: claim values must already occur in the immutable evidence passage. Maker-checker separation and exact-value comparison prevent self-approval and evidence substitution. Material contradictions route to a conflict record instead of silently creating a supported fact.
 
 Claim-to-check routing is also private, universe-scoped, state-checked, and audited. The router validates entity scope and exact predicate equality again at decision time. Only supported-or-better claims may be attached, and attachment cannot transition a diligence check directly to a completed or verified state.

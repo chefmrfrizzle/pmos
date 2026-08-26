@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -20,6 +20,7 @@ from pmos_research.passage_adjudication import PassageAdjudicationError,adjudica
 from pmos_research.passage_review import build_passage_packet
 from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
 from pmos_research.evidence_route_review import build_route_packet
+from pmos_research.change_review import ChangeReviewError,adjudicate_change,build_change_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -43,6 +44,11 @@ class PassageActionRequest(BaseModel):
     expected_status:str=Field(min_length=5,max_length=40)
 
 class RoutingActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=20)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:str=Field(min_length=5,max_length=40)
+
+class ChangeActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=20)
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
@@ -159,6 +165,25 @@ def evidence_routing_action(route_id:int,body:RoutingActionRequest,principal:Pri
         try:result=adjudicate_route(s,route_id,body.action,principal.subject,body.rationale,body.expected_status)
         except EvidenceRoutingError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"EVIDENCE_ROUTING_ACTION",{"route_id":route_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"check_id":result["check_id"]});s.commit();return result
+
+@app.get("/evidence-review/source-changes")
+def source_change_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(25,ge=1,le=50),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        events=s.query(SourceChangeEvent).filter(SourceChangeEvent.status==status.upper()).order_by(SourceChangeEvent.detected_at.desc(),SourceChangeEvent.id.desc()).limit(limit*5).all();rows=[]
+        for event in events:
+            packet=build_change_packet(s,event.id)
+            if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"SOURCE_CHANGE_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/evidence-review/source-changes/{event_id}/actions")
+def source_change_action(event_id:int,body:ChangeActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_change_packet(s,event_id);authorize(principal,"evidence:write",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["universe"])
+        try:result=adjudicate_change(s,event_id,body.action,principal.subject,body.rationale,body.expected_status)
+        except ChangeReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"SOURCE_CHANGE_ACTION",{"event_id":event_id,"action":body.action.upper(),"resulting_state":result["resulting_state"]});s.commit();return result
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"pmos-api"}

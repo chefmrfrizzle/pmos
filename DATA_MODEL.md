@@ -28,6 +28,8 @@ Identity review packets intentionally exclude `RawImportRow.original_row_json` a
 
 PDF snapshots use the same source/snapshot models as HTML, while each extracted `EvidencePassage.page` preserves its PDF page number. The raw PDF is not stored in the application database or public repository; the source document retains its URL and content-addressed normalized-text snapshot for review.
 
+`SourceChangeEvent` immutably links the prior and resulting document snapshots with both hashes, text similarity, added/removed token counts, detection time, and review state. Unchanged retrievals remain explicit `UNCHANGED` events. Changed sources begin `HUMAN_REVIEW_REQUIRED`. `SourceChangeReviewEvent` preserves acknowledgements, deferrals, and escalations without rewriting either snapshot or changing downstream claims.
+
 `ResearchPassageAdjudicationEvent` is the append-only decision history for passage candidates. A maker may propose an exact normalized substring already present in the passage. A different reviewer must approve the identical value before PMOS appends a `SUPPORTED` claim and `ClaimEvidence` link. Rejection and deferral create no claim. `MARK_CONFLICT` creates a conflict-state claim and links it with contradictory material claims in a `ConflictCase`; it never selects a winner.
 
 `ClaimCheckRoutingCandidate` is the controlled bridge between an assertion and a case procedure. It is generated only for a supported-or-better claim whose predicate exactly matches an open check’s fact class. A route remains `PENDING_REVIEW` until a reviewer attaches, rejects, or defers it. `ClaimCheckRoutingEvent` preserves that decision. Attachment changes a check only to `EVIDENCE_COLLECTED`; it cannot approve or complete the check.
