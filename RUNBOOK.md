@@ -34,6 +34,8 @@ Run `python scripts/run_isolated_job.py relationship-discovery --limit 100` afte
 
 For a proposed assertion, use `evidence_controls.corroboration_gaps` as a bounded remediation queue. Resolve hash, scope, freshness, and semantic failures before sourcing additional material. `SECOND_INDEPENDENT_PUBLISHER_REQUIRED` means content-distinct evidence, not a second URL carrying the same document. `DISPOSITIVE_S0_REQUIRED` cannot be cleared with press coverage or counterparty self-description.
 
+Before counting two publishers, propose the observed domain and its ultimate publisher-control group at authenticated `POST /publisher-independence` with exact ownership/control evidence. Review pending work at `GET /publisher-independence`; a different `REVIEWER` or `ADMIN` with `evidence:approve` must approve the unchanged package. Until approval, relationship packets show `PUBLISHER_INDEPENDENCE_REVIEW_REQUIRED`. Never infer independence from different hostnames, brands, or mastheads alone.
+
 Inspect unmatched named objects through authenticated `GET /relationship-mentions`. `LINK_TARGET` requires a distinct existing entity and authorization over both universes; otherwise reject or defer. Never create a new institution merely to clear this queue. Confirm legal identity through the identity workflow first, then link the mention and continue through relationship-candidate review.
 
 Private control and ledger scripts select their datastore only through `PMOS_DB_URL`; they reject unsupported command-line arguments. Set the absolute external SQLite URL in the command environment and confirm the reported populations are consistent with the intended datastore before relying on the result.

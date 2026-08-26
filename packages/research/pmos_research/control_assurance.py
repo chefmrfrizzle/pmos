@@ -14,12 +14,13 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    PublisherIndependenceAssessment,PublisherIndependenceEvent,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
 from .evidence_review_batch import build_batch_packet
 from .identity_review_batch import build_identity_batch_packet
+from .publisher_independence import build_publisher_independence_packet
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -114,6 +115,12 @@ def run_control_assurance(session)->dict:
         entity=session.get(Entity,case.entity_id);claim=session.get(Claim,case.source_claim_id) if case.source_claim_id else None;events=session.scalars(select(JurisdictionReviewEvent).where(JurisdictionReviewEvent.case_id==case.id).order_by(JurisdictionReviewEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE_CORRECTION"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE_CORRECTION"),None)
         bad+=not entity or entity.country!=case.proposed_country or not claim or claim.entity_id!=case.entity_id or claim.value.strip().upper()!=case.proposed_country or claim.verification_status not in QUALIFYING_CLAIMS or not claim.evidence_hash or not proposal or not approval or proposal.actor==approval.actor or case.proposed_by!=proposal.actor or case.reviewed_by!=approval.actor
     controls.append(_control("approved_jurisdiction_correction_evidence_and_maker_checker",len(jurisdiction_cases),bad))
+
+    publisher_assessments=session.scalars(select(PublisherIndependenceAssessment).where(PublisherIndependenceAssessment.status=="APPROVED")).all();bad=0
+    for assessment in publisher_assessments:
+        packet=build_publisher_independence_packet(session,assessment.id);events=session.scalars(select(PublisherIndependenceEvent).where(PublisherIndependenceEvent.assessment_id==assessment.id).order_by(PublisherIndependenceEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
+        bad+=not packet["evidence"] or not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=assessment.evidence_package_hash or approval.evidence_package_hash!=assessment.evidence_package_hash
+    controls.append(_control("approved_publisher_independence_maker_checker",len(publisher_assessments),bad))
 
     relationships=session.scalars(select(RelationshipAssertion).where(RelationshipAssertion.status=="SPECIALIST_VERIFIED")).all();bad=0
     for assertion in relationships:

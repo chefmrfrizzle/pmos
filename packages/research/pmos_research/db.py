@@ -553,6 +553,41 @@ class SourceDocument(Base):
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("source_url", "content_hash", name="uq_source_document_snapshot"),)
 
+class PublisherIndependenceAssessment(Base):
+    __tablename__ = "publisher_independence_assessments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_domain: Mapped[str] = mapped_column(String(300), index=True)
+    independence_group: Mapped[str] = mapped_column(String(300), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    proposed_by: Mapped[str] = mapped_column(String(150))
+    proposal_rationale: Mapped[str] = mapped_column(Text)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    review_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_package_hash: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("source_domain","independence_group","version",name="uq_publisher_independence_assessment_version"),)
+
+class PublisherIndependenceEvidence(Base):
+    __tablename__ = "publisher_independence_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assessment_id: Mapped[int] = mapped_column(ForeignKey("publisher_independence_assessments.id"), index=True)
+    evidence_passage_id: Mapped[int] = mapped_column(ForeignKey("evidence_passages.id"), index=True)
+    __table_args__ = (UniqueConstraint("assessment_id","evidence_passage_id",name="uq_publisher_independence_evidence"),)
+
+class PublisherIndependenceEvent(Base):
+    __tablename__ = "publisher_independence_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assessment_id: Mapped[int] = mapped_column(ForeignKey("publisher_independence_assessments.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    evidence_package_hash: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class EvidencePassage(Base):
     __tablename__ = "evidence_passages"
     id: Mapped[int] = mapped_column(primary_key=True)

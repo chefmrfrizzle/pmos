@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,RelationshipMentionCandidate,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -32,6 +32,7 @@ from pmos_research.private_sale_review import build_private_sale_packet
 from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate_jurisdiction,build_jurisdiction_packet
 from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_batch_packet,freeze_review_batch
 from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,close_batch,revoke_assignment
+from pmos_research.publisher_independence import PublisherIndependenceError,adjudicate_publisher_independence,build_publisher_independence_packet,propose_publisher_independence
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -91,6 +92,17 @@ class RelationshipMentionActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
     target_entity_id:Optional[int]=Field(default=None,gt=0)
+
+class PublisherIndependenceProposalRequest(BaseModel):
+    source_domain:str=Field(min_length=4,max_length=300)
+    independence_group:str=Field(min_length=1,max_length=300)
+    rationale:str=Field(min_length=10,max_length=2000)
+    evidence_passage_ids:list[int]=Field(min_length=1,max_length=25)
+
+class PublisherIndependenceActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=20)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:str=Field(min_length=5,max_length=40)
 
 class PrivateSaleCreateRequest(BaseModel):
     asset_entity_id:int=Field(gt=0)
@@ -317,6 +329,46 @@ def relationship_proposal(body:RelationshipProposalRequest,principal:Principal=D
         try:assertion=propose_relationship(s,source.id,target.id,body.relation_type,principal.subject,body.evidence_passage_ids,body.jurisdiction)
         except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc))
         packet=build_relationship_packet(s,assertion.id);audit_access(s,principal,"RELATIONSHIP_PROPOSED",{"assertion_id":assertion.id,"relation_type":assertion.relation_type,"evidence_count":len(set(body.evidence_passage_ids))});s.commit();return packet
+
+@app.post("/publisher-independence")
+def publisher_independence_proposal(body:PublisherIndependenceProposalRequest,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"evidence:write",{"RESEARCHER","REVIEWER","ADMIN"})
+    with SessionLocal() as s:
+        passages=s.scalars(select(EvidencePassage).where(EvidencePassage.id.in_(set(body.evidence_passage_ids)))).all();documents={x.id:s.get(SourceDocument,x.document_id) for x in passages}
+        for document in documents.values():
+            entity=s.get(Entity,document.entity_id) if document and document.entity_id else None
+            if entity:authorize(principal,"evidence:write",{"RESEARCHER","REVIEWER","ADMIN"},entity.universe)
+        try:assessment=propose_publisher_independence(s,body.source_domain,body.independence_group,principal.subject,body.rationale,body.evidence_passage_ids)
+        except PublisherIndependenceError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_publisher_independence_packet(s,assessment.id);audit_access(s,principal,"PUBLISHER_INDEPENDENCE_PROPOSED",{"assessment_id":assessment.id,"source_domain":assessment.source_domain,"evidence_count":len(set(body.evidence_passage_ids))});s.commit();return packet
+
+@app.get("/publisher-independence")
+def publisher_independence_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","ADMIN"})
+    with SessionLocal() as s:
+        rows=[]
+        for assessment in s.scalars(select(PublisherIndependenceAssessment).where(PublisherIndependenceAssessment.status==status.upper()).order_by(PublisherIndependenceAssessment.id).limit(limit*10)):
+            packet=build_publisher_independence_packet(s,assessment.id);universes=set()
+            for item in packet["evidence"]:
+                document=s.get(SourceDocument,item["document_id"]);entity=s.get(Entity,document.entity_id) if document and document.entity_id else None
+                if entity:universes.add(entity.universe)
+            if "*" not in principal.universes and not universes.issubset(principal.universes):continue
+            rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"PUBLISHER_INDEPENDENCE_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/publisher-independence/{assessment_id}/actions")
+def publisher_independence_action(assessment_id:int,body:PublisherIndependenceActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper()=="APPROVE";permission="evidence:approve" if approval else "evidence:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
+    with SessionLocal() as s:
+        packet=build_publisher_independence_packet(s,assessment_id)
+        for item in packet["evidence"]:
+            document=s.get(SourceDocument,item["document_id"]);entity=s.get(Entity,document.entity_id) if document and document.entity_id else None
+            if entity:authorize(principal,permission,roles,entity.universe)
+        authorize(principal,permission,roles)
+        try:assessment=adjudicate_publisher_independence(s,assessment_id,body.action,principal.subject,body.rationale,body.expected_status)
+        except PublisherIndependenceError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        result=build_publisher_independence_packet(s,assessment.id);audit_access(s,principal,"PUBLISHER_INDEPENDENCE_ACTION",{"assessment_id":assessment.id,"action":body.action.upper(),"resulting_state":assessment.status});s.commit();return result
 
 @app.get("/relationship-candidates")
 def relationship_candidate_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):

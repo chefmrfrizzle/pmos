@@ -7,6 +7,7 @@ from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
 from pmos_research.audit_ledger import append_ledger_event,verify_ledger
 from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship,relationship_evidence_controls,verify_relationship
+from pmos_research.publisher_independence import adjudicate_publisher_independence,propose_publisher_independence
 from pmos_research.registry_research import assess_lei_candidate,persist_lei_candidate
 from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
@@ -347,6 +348,12 @@ def _relationship_fixture(db,ranks,text_template="{source} advises {target}.",co
         db.add(document);db.flush();digest=hashlib.sha256(text.encode()).hexdigest();passage=EvidencePassage(document_id=document.id,section="relationship",passage=text,passage_hash=digest);db.add(passage);passages.append(passage)
     db.flush();return source,target,passages
 
+def _approve_publisher_groups(db,passages):
+    for passage in passages:
+        document=db.get(SourceDocument,passage.document_id);domain=document.source_url.split("//",1)[1].split("/",1)[0]
+        assessment=propose_publisher_independence(db,domain,document.publisher_independence_group,"publisher-maker","Control structure documented for corroboration",[passage.id])
+        adjudicate_publisher_independence(db,assessment.id,"APPROVE","publisher-checker","Independent review confirms the publisher control group","HUMAN_REVIEW_REQUIRED")
+
 def test_sensitive_relationship_requires_dispositive_primary_source_and_independent_review():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
@@ -367,6 +374,7 @@ def test_relationship_verification_accepts_s0_or_independent_corroboration():
         assert verify_ledger(db,"RELATIONSHIP_ASSERTION",sensitive.id)["valid"]
     with factory() as db:
         source,target,passages=_relationship_fixture(db,[("S1","annual-report"),("S2","market-infrastructure")])
+        _approve_publisher_groups(db,passages)
         ordinary=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in passages])
         verify_relationship(db,ordinary.id,"checker","independent sources corroborate the advisory relationship")
         assert ordinary.status=="SPECIALIST_VERIFIED"
@@ -375,6 +383,7 @@ def test_relationship_corroboration_rejects_syndicated_duplicates_and_irrelevant
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
         duplicate_hash="d"*64;source,target,passages=_relationship_fixture(db,[("S1","publisher-a"),("S2","publisher-b")],content_hashes={1:duplicate_hash,2:duplicate_hash})
+        _approve_publisher_groups(db,passages)
         assertion=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in passages]);controls=relationship_evidence_controls(db,assertion)
         assert controls["duplicate_content_count"]==1 and controls["independence_group_count"]==1 and not controls["verification_eligible"]
         assert controls["corroboration_gaps"]==["SYNDICATED_OR_DUPLICATE_CONTENT_EXCLUDED","SECOND_INDEPENDENT_PUBLISHER_REQUIRED"]

@@ -28,6 +28,8 @@ An entity-level verification label is a coverage roll-up. Only assertion-level e
 
 Relationship evidence controls also record entity-pair name coverage, predicate-language coverage, document-content duplication, eligibility, and publisher independence group per passage. Only eligible, content-distinct evidence contributes to the policy calculation.
 
+`PublisherIndependenceAssessment` turns a declared publisher group into a governed assertion. It binds one observed source domain and proposed control group to exact evidence, a deterministic evidence-package hash, maker/checker history, and an approval state. `PublisherIndependenceEvidence` and `PublisherIndependenceEvent` preserve the evidence and decision trail. An unapproved declaration never contributes to multi-publisher corroboration.
+
 `RelationshipResearchCandidate` is a pre-assertion queue item created only when a versioned rule finds a controlled relationship phrase and a full registered counterparty name in an exact passage. It retains the source/target IDs, suggested type, passage, reasons, and conservative confidence. Review may reject, defer, or promote it into a separate assertion; discovery never writes a graph edge or verified relationship.
 
 `RelationshipMentionCandidate` preserves a bounded named object following a controlled relationship phrase when no registered target matches. Its lifecycle is `ENTITY_RESOLUTION_REQUIRED`, `TARGET_LINKED`, `DEFERRED`, or `REJECTED`. Linking requires a distinct registered target and produces only a `HUMAN_REVIEW_REQUIRED` relationship candidate; it never auto-registers an institution.

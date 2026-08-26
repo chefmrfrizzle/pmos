@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
 from .db import Entity,EvidencePassage,RelationshipAdjudicationEvent,RelationshipAssertion,RelationshipAssertionEvidence,SourceDocument
+from .publisher_independence import approved_independence_group
 
 ALLOWED_RELATIONSHIPS={"OWNS","MANAGES","ADVISES","ALLOCATES_TO","INVESTED_IN","CO_INVESTED_WITH","TRUSTEE_OF","BOARD_MEMBER_OF","REPRESENTS","FINANCES","INSURES","REINSURES","BROKERS_FOR","CUSTODIES","ADMINISTERS","INTRODUCED_BY","WORKS_FOR","FOUNDED","CONTROLS","BOUGHT_FROM","SOLD_TO","ADVISED_BY","RELATED_TO","PARTNERED_WITH","BENEFICIAL_OWNER_OF"}
 SENSITIVE_RELATIONSHIPS={"OWNS","CONTROLS","BENEFICIAL_OWNER_OF","TRUSTEE_OF"}
@@ -36,11 +37,11 @@ def relationship_evidence_controls(session,assertion:RelationshipAssertion)->dic
         hash_valid=hashlib.sha256(passage.passage.encode()).hexdigest()==passage.passage_hash;scope_valid=document.entity_id in {assertion.from_entity_id,assertion.to_entity_id};text=_norm(passage.passage);names_valid=bool(source and target and _norm(source.name) in text and _norm(target.name) in text);terms=RELATIONSHIP_TERMS.get(assertion.relation_type,());relation_language=any(_norm(term) in text for term in terms);semantic_valid=names_valid and relation_language
         bad_hash+=not hash_valid;out_of_scope+=not scope_valid;semantic+=not semantic_valid
         age=max(0,(now-_utc(document.retrieved_at)).days);fresh=age<=threshold;stale+=not fresh;duplicate_content=document.content_hash in seen_content;duplicate+=duplicate_content
-        eligible=hash_valid and scope_valid and fresh and semantic_valid and not duplicate_content
+        approved_group=approved_independence_group(session,document) if document.source_rank in QUALIFYING_CORROBORATION else None;eligible=hash_valid and scope_valid and fresh and semantic_valid and not duplicate_content
         if eligible:
             seen_content.add(document.content_hash);ranks.add(document.source_rank)
-            if document.source_rank in QUALIFYING_CORROBORATION:groups.add(document.publisher_independence_group)
-        factors.append({"source_document_id":document.id,"passage_id":passage.id,"source_rank":document.source_rank,"independence_group":document.publisher_independence_group,"age_days":age,"freshness_threshold_days":threshold,"passage_hash_valid":hash_valid,"entity_pair_named":names_valid,"relationship_language_present":relation_language,"duplicate_content":duplicate_content,"eligible":eligible})
+            if approved_group:groups.add(approved_group)
+        factors.append({"source_document_id":document.id,"passage_id":passage.id,"source_rank":document.source_rank,"declared_independence_group":document.publisher_independence_group,"approved_independence_group":approved_group,"age_days":age,"freshness_threshold_days":threshold,"passage_hash_valid":hash_valid,"entity_pair_named":names_valid,"relationship_language_present":relation_language,"duplicate_content":duplicate_content,"eligible":eligible})
     sufficient="S0" in ranks if assertion.sensitive else "S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}));evidence_integrity=bool(rows) and bad_hash==0 and out_of_scope==0 and stale==0;semantic_valid=bool(rows) and semantic==0;integrity=evidence_integrity and semantic_valid
     rank_score=max(({"S0":1.0,"S1":.9,"S2":.8,"S3":.65}.get(x,.3) for x in ranks),default=0);independence_bonus=min(.1,max(0,len(groups)-1)*.05);confidence=round(min(1,rank_score+independence_bonus) if integrity and sufficient else min(.49,rank_score*.5),2)
     gaps=[]
@@ -53,6 +54,7 @@ def relationship_evidence_controls(session,assertion:RelationshipAssertion)->dic
     if assertion.sensitive and "S0" not in ranks:gaps.append("DISPOSITIVE_S0_REQUIRED")
     if not assertion.sensitive and "S0" not in ranks:
         if not ranks & {"S1","S2"}:gaps.append("S1_OR_S2_REQUIRED")
+        if any(x["eligible"] and x["source_rank"] in QUALIFYING_CORROBORATION and not x["approved_independence_group"] for x in factors):gaps.append("PUBLISHER_INDEPENDENCE_REVIEW_REQUIRED")
         if len(groups)<2:gaps.append("SECOND_INDEPENDENT_PUBLISHER_REQUIRED")
     return {"evidence_count":len(rows),"eligible_evidence_count":sum(x["eligible"] for x in factors),"passage_hash_exceptions":bad_hash,"entity_scope_exceptions":out_of_scope,"semantic_scope_exceptions":semantic,"stale_source_count":stale,"duplicate_content_count":duplicate,"source_ranks":sorted(ranks),"independence_groups":sorted(groups),"independence_group_count":len(groups),"policy":"DISPOSITIVE_S0" if assertion.sensitive else "S0_OR_TWO_INDEPENDENT_S1_TO_S3_INCLUDING_S1_OR_S2","policy_sufficient":sufficient,"evidence_integrity_valid":evidence_integrity,"semantic_scope_valid":semantic_valid,"integrity_valid":integrity,"verification_eligible":integrity and sufficient,"corroboration_gaps":gaps,"evidence_confidence":confidence,"confidence_factors":factors,"evidence_package_hash":_package_hash(rows)}
 
