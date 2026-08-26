@@ -142,6 +142,8 @@ Run only one universe:
 ./.venv/bin/python scripts/research_universe.py --universe sovereign_wealth
 ./.venv/bin/python scripts/research_universe.py --universe private_banks
 ./.venv/bin/python scripts/research_universe.py --universe insurance
+# Bound a research batch to one or more ISO jurisdictions when required.
+./.venv/bin/python scripts/research_universe.py --universe pensions --country ZA --country IN --country BR --limit 3
 ```
 
 Broad direct exports are disabled. Request a single-case dossier through the authenticated private API, obtain independent `EXPORTER`/`ADMIN` approval after a passing control-assurance run, then execute the approved request locally on encrypted private storage:

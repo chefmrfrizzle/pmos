@@ -11,14 +11,18 @@ from pmos_research.db import CorroborationJob,Entity,SessionLocal,init_db
 
 parser=argparse.ArgumentParser(description="Research public-registry institutions without exposing private identities.")
 parser.add_argument("--universe")
+parser.add_argument("--country",action="append",dest="countries",help="ISO 3166-1 alpha-2 country filter; repeatable")
 parser.add_argument("--limit",type=int,default=25)
 args=parser.parse_args()
 if args.universe=="imported_private":raise SystemExit("private-import research requires an explicitly scoped diligence-case workflow")
 if args.limit<1 or args.limit>100:raise SystemExit("--limit must be between 1 and 100")
+countries={value.strip().upper() for value in (args.countries or [])}
+if any(len(value)!=2 or not value.isalpha() for value in countries):raise SystemExit("--country must be an ISO 3166-1 alpha-2 code")
 init_db();adapter=OfficialWebAdapter();counts=Counter()
 with SessionLocal() as db:
     entities=select(Entity).where(Entity.universe!="imported_private",Entity.official_url.is_not(None),Entity.official_url!="")
     if args.universe:entities=entities.where(Entity.universe==args.universe)
+    if countries:entities=entities.where(Entity.country.in_(sorted(countries)))
     rows=db.scalars(entities.order_by(Entity.universe,Entity.canonical_name,Entity.id)).all();entity_ids={x.id for x in rows}
     existing={(x.entity_id,x.source_url) for x in db.scalars(select(CorroborationJob).where(CorroborationJob.entity_id.in_(entity_ids))).all()} if entity_ids else set()
     for entity in rows:

@@ -50,6 +50,9 @@ universes:
       - {name: Universities Superannuation Scheme, country: GB, city: Liverpool, url: https://www.uss.co.uk/}
       - {name: GPIF, country: JP, city: Tokyo, url: https://www.gpif.go.jp/en/}
       - {name: National Pension Service, country: KR, city: Jeonju, url: https://www.nps.or.kr/}
+      - {name: Government Employees Pension Fund, country: ZA, city: Pretoria, url: https://www.gepf.co.za/}
+      - {name: Employees' Provident Fund Organisation, country: IN, url: https://www.epfindia.gov.in/}
+      - {name: Previ, country: BR, city: Rio de Janeiro, url: https://www.previ.com.br/}
 
   private_banks:
     label: Private Banks & UHNW
