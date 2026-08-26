@@ -395,12 +395,14 @@ def relationship_mention_queue(status:str="ENTITY_RESOLUTION_REQUIRED",limit:int
 
 @app.post("/relationship-mentions/{mention_id}/actions")
 def relationship_mention_action(mention_id:int,body:RelationshipMentionActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper() in {"APPROVE_TARGET","REJECT_TARGET"};permission="identity:approve" if approval else "identity:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
     with SessionLocal() as s:
-        packet=build_relationship_mention_packet(s,mention_id);authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},packet["source_entity"]["universe"])
+        packet=build_relationship_mention_packet(s,mention_id);authorize(principal,permission,roles,packet["source_entity"]["universe"])
         if body.target_entity_id:
             target=s.get(Entity,body.target_entity_id)
             if not target:raise HTTPException(status_code=404,detail="target entity not found")
-            authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},target.universe)
+            authorize(principal,permission,roles,target.universe)
+        elif packet.get("resolution") and packet["resolution"].get("target_entity"):authorize(principal,permission,roles,packet["resolution"]["target_entity"]["universe"])
         try:mention=adjudicate_relationship_mention(s,mention_id,body.action,principal.subject,body.rationale,body.expected_status,body.target_entity_id)
         except RelationshipResearchError as exc:raise HTTPException(status_code=422,detail=str(exc))
         result=build_relationship_mention_packet(s,mention.id);audit_access(s,principal,"RELATIONSHIP_MENTION_ACTION",{"mention_id":mention.id,"action":body.action.upper(),"resulting_state":mention.status,"resolved_entity_id":mention.resolved_entity_id,"resulting_candidate_id":mention.resulting_candidate_id});s.commit();return result

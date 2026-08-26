@@ -11,7 +11,7 @@ from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
     EvidencePassage,EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionAuthorization,EvidenceReviewDecisionBinding,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,IdentityReviewAssignment,IdentityReviewAssignmentEvent,IdentityReviewBatch,IdentityReviewBatchItem,IdentityReviewDecisionAuthorization,IdentityReviewDecisionBinding,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
-    LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipResearchCandidate,
+    LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
     PublisherIndependenceAssessment,PublisherIndependenceEvent,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
@@ -21,6 +21,7 @@ from .private_sale import gate_sufficiency
 from .evidence_review_batch import build_batch_packet
 from .identity_review_batch import build_identity_batch_packet
 from .publisher_independence import build_publisher_independence_packet
+from .relationship_research import mention_identity_package_hash
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -133,10 +134,19 @@ def run_control_assurance(session)->dict:
         assertion=session.get(RelationshipAssertion,candidate.resulting_assertion_id) if candidate.resulting_assertion_id else None;link=session.scalar(select(RelationshipAssertionEvidence.id).where(RelationshipAssertionEvidence.relationship_assertion_id==candidate.resulting_assertion_id,RelationshipAssertionEvidence.evidence_passage_id==candidate.evidence_passage_id)) if assertion else None
         bad+=not assertion or assertion.from_entity_id!=candidate.from_entity_id or assertion.to_entity_id!=candidate.to_entity_id or assertion.relation_type!=candidate.suggested_relation_type or not link
     controls.append(_control("relationship_candidate_promotion_exact_evidence_link",len(promoted_candidates),bad))
+    mention_resolutions=session.scalars(select(RelationshipMentionResolution)).all();bad=0
+    for resolution in mention_resolutions:
+        mention=session.get(RelationshipMentionCandidate,resolution.mention_candidate_id);target=session.get(Entity,resolution.target_entity_id);events=session.scalars(select(RelationshipMentionResolutionEvent).where(RelationshipMentionResolutionEvent.resolution_id==resolution.id).order_by(RelationshipMentionResolutionEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE_TARGET"),None);terminal=next((x for x in reversed(events) if x.action in {"APPROVE_TARGET","REJECT_TARGET"}),None)
+        try:package_valid=bool(mention and target and resolution.identity_package_hash==mention_identity_package_hash(session,mention,target))
+        except Exception:package_valid=False
+        bad+=not proposal or proposal.actor!=resolution.proposed_by or proposal.identity_package_hash!=resolution.identity_package_hash or not package_valid or (resolution.status in {"APPROVED","REJECTED"} and (not terminal or terminal.actor==proposal.actor or terminal.identity_package_hash!=resolution.identity_package_hash))
+    controls.append(_control("mention_resolution_package_and_history",len(mention_resolutions),bad))
     linked_mentions=session.scalars(select(RelationshipMentionCandidate).where(RelationshipMentionCandidate.status=="TARGET_LINKED")).all();bad=0
     for mention in linked_mentions:
-        candidate=session.get(RelationshipResearchCandidate,mention.resulting_candidate_id) if mention.resulting_candidate_id else None
-        bad+=not mention.resolved_entity_id or not candidate or candidate.from_entity_id!=mention.from_entity_id or candidate.to_entity_id!=mention.resolved_entity_id or candidate.suggested_relation_type!=mention.suggested_relation_type or candidate.evidence_passage_id!=mention.evidence_passage_id
+        candidate=session.get(RelationshipResearchCandidate,mention.resulting_candidate_id) if mention.resulting_candidate_id else None;resolution=session.scalar(select(RelationshipMentionResolution).where(RelationshipMentionResolution.mention_candidate_id==mention.id,RelationshipMentionResolution.status=="APPROVED").order_by(RelationshipMentionResolution.version.desc()));target=session.get(Entity,mention.resolved_entity_id) if mention.resolved_entity_id else None;events=session.scalars(select(RelationshipMentionResolutionEvent).where(RelationshipMentionResolutionEvent.resolution_id==resolution.id).order_by(RelationshipMentionResolutionEvent.id)).all() if resolution else [];proposal=next((x for x in events if x.action=="PROPOSE_TARGET"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE_TARGET"),None)
+        try:package_valid=bool(resolution and target and resolution.identity_package_hash==mention_identity_package_hash(session,mention,target))
+        except Exception:package_valid=False
+        bad+=not mention.resolved_entity_id or not candidate or not resolution or resolution.target_entity_id!=mention.resolved_entity_id or not proposal or not approval or proposal.actor==approval.actor or proposal.identity_package_hash!=approval.identity_package_hash or not package_valid or candidate.from_entity_id!=mention.from_entity_id or candidate.to_entity_id!=mention.resolved_entity_id or candidate.suggested_relation_type!=mention.suggested_relation_type or candidate.evidence_passage_id!=mention.evidence_passage_id
     controls.append(_control("relationship_mention_resolution_candidate_link",len(linked_mentions),bad))
 
     completed_gates=session.scalars(select(PrivateSaleGate).where(PrivateSaleGate.status.in_({"PASS","PASS_WITH_EXCEPTION","BLOCKED"}))).all();bad=0

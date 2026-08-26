@@ -16,6 +16,8 @@ High-risk case approval requires independent maker-checker review. Material iden
 
 Identity review routes are private-by-default, role/action authorized, and filtered by universe before returning results. Packets never include original raw-row JSON or contact emails. Match proposals require scoped content-addressed evidence; independent approvals must reference the same evidence package, preventing a reviewer from approving a materially different record set. Dossier access is separately permissioned and audited, including whether exact passages were requested.
 
+Unresolved relationship mentions use the same maker/checker principle. `identity:write` may propose a registered target; only a different `REVIEWER` or `ADMIN` with `identity:approve` may approve it. Material changes to either identity or the evidence after proposal invalidate the package and block linkage.
+
 The local ledger is SHA-256 hash-chained per decision stream and SQLite installs fail-closed triggers that reject ledger updates and deletes. `scripts/verify_audit_ledger.py` replays every reachable stream and fails on changed payloads, broken predecessor hashes, or changed event hashes. Production PostgreSQL must additionally isolate ledger insert permissions from operational roles, sign periodic roots with an external key, and export roots to independent retention.
 
 Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.

@@ -38,7 +38,9 @@ Before counting two publishers, propose the observed domain and its ultimate pub
 
 Diligence-check sufficiency and two-source private-sale gate packets expose `unreviewed_publisher_count`, `duplicate_content_count`, approved `independence_groups`, and per-document source factors. Clear publisher governance before proposing completion or pass; do not use an exception merely to avoid a missing independence assessment.
 
-Inspect unmatched named objects through authenticated `GET /relationship-mentions`. `LINK_TARGET` requires a distinct existing entity and authorization over both universes; otherwise reject or defer. Never create a new institution merely to clear this queue. Confirm legal identity through the identity workflow first, then link the mention and continue through relationship-candidate review.
+Inspect unmatched named objects through authenticated `GET /relationship-mentions`. Never create a new institution merely to clear this queue. Confirm legal identity through the identity workflow first, then propose the existing target and continue through relationship-candidate review only after independent approval.
+
+Use `PROPOSE_TARGET`—not direct linkage—with a distinct registered target and `identity:write`. The mention becomes `TARGET_PROPOSED` without creating a candidate. A different `REVIEWER` or `ADMIN` with `identity:approve` must use `APPROVE_TARGET` against the unchanged identity package; `REJECT_TARGET` preserves the rejected version and returns the mention to `ENTITY_RESOLUTION_REQUIRED`. Legacy `LINK_TARGET` is not accepted.
 
 Private control and ledger scripts select their datastore only through `PMOS_DB_URL`; they reject unsupported command-line arguments. Set the absolute external SQLite URL in the command environment and confirm the reported populations are consistent with the intended datastore before relying on the result.
 

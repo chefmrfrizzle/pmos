@@ -848,6 +848,34 @@ class RelationshipMentionCandidateEvent(Base):
     rationale: Mapped[str] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class RelationshipMentionResolution(Base):
+    __tablename__ = "relationship_mention_resolutions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mention_candidate_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_candidates.id"), index=True)
+    target_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    proposed_by: Mapped[str] = mapped_column(String(150))
+    proposal_rationale: Mapped[str] = mapped_column(Text)
+    identity_package_hash: Mapped[str] = mapped_column(String(64))
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    review_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("mention_candidate_id","version",name="uq_relationship_mention_resolution_version"),)
+
+class RelationshipMentionResolutionEvent(Base):
+    __tablename__ = "relationship_mention_resolution_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resolution_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_resolutions.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    identity_package_hash: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class RelationshipAssertionEvidence(Base):
     __tablename__ = "relationship_assertion_evidence"
     id: Mapped[int] = mapped_column(primary_key=True)
