@@ -1,7 +1,7 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import ImportSafetyError,detect_header,import_csv,preflight_import
-from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
+from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, Evidence, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
 from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
@@ -213,16 +213,19 @@ def _review_fixture(db):
     decision=ResolutionDecision(raw_row_id=raw.id,candidate_entity_id=existing.id,state="PROBABLE_MATCH",confidence=.92,reasons_json='["strong name match"]')
     db.add(decision);db.flush()
     item=ReviewQueueItem(resolution_decision_id=decision.id,queue_type="ENTITY",priority=85,reasons_json='["review"]')
-    db.add(item);db.flush();return item
+    db.add(item);db.flush()
+    evidence=Evidence(entity_id=existing.id,source_url="https://example.test/about",source_type="official",content_hash="e"*64,confidence=.9)
+    db.add(evidence);db.flush();return item,evidence
 
 def test_adjudication_is_two_stage_and_preserves_source_entities():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        item=_review_fixture(db);version=item.updated_at.replace(tzinfo=timezone.utc).isoformat() if item.updated_at.tzinfo is None else item.updated_at.isoformat()
-        result=adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",expected_version=version)
+        item,evidence=_review_fixture(db);version=item.updated_at.replace(tzinfo=timezone.utc).isoformat() if item.updated_at.tzinfo is None else item.updated_at.isoformat()
+        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",expected_version=version)
+        result=adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",evidence_ids=[evidence.id],expected_version=version)
         assert result["resulting_state"]=="PROPOSED"
-        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"APPROVE_MATCH","maker","self approval")
-        adjudicate(db,item.id,"APPROVE_MATCH","checker","independent review completed",expected_version=result["version"])
+        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"APPROVE_MATCH","maker","self approval",evidence_ids=[evidence.id])
+        adjudicate(db,item.id,"APPROVE_MATCH","checker","independent review completed",evidence_ids=[evidence.id],expected_version=result["version"])
         assert item.status=="ACCEPTED"
         assert db.scalar(select(func.count()).select_from(Entity))==2
         assert db.scalar(select(func.count()).select_from(IdentityCluster).where(IdentityCluster.status=="ACCEPTED"))==1
@@ -232,14 +235,14 @@ def test_adjudication_is_two_stage_and_preserves_source_entities():
 def test_adjudication_rejects_stale_review_version():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        item=_review_fixture(db)
+        item,_=_review_fixture(db)
         with pytest.raises(StaleReviewError):adjudicate(db,item.id,"DEFER","reviewer","needs more evidence",expected_version="stale")
         assert item.status=="PENDING"
 
 def test_shadow_audit_only_retains_exact_matches_meeting_strict_identity_controls():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        item=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id);decision.state="EXACT_MATCH"
+        item,_=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id);decision.state="EXACT_MATCH"
         result=shadow_audit(db)
         assert result["total_prior_exact"]==1
         assert result["still_exact"]==1

@@ -106,11 +106,13 @@ def test_authenticated_case_check_workflow_enforces_maker_checker(monkeypatch):
         passage=EvidencePassage(document_id=document.id,section="record",passage="legal identity",passage_hash="2"*64);db.add(passage);db.flush()
         claim=Claim(entity_id=entity.id,field="legal_name",value=entity.name,source_url=document.source_url,source_type="registry",confidence=1,verification_status="SUPPORTED",extractor="test",evidence_hash=document.content_hash);db.add(claim);db.flush();db.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=1,supports=True));db.commit();case_id=case.id;check_id=check.id;claim_id=claim.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
-    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"checks:read","checks:write"}),frozenset({"venture_capital"}),"oidc","maker-request")
+    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"checks:read","checks:write","dossiers:read"}),frozenset({"venture_capital"}),"oidc","maker-request")
     main.app.dependency_overrides[authenticate_private_request]=lambda:maker
     try:
         with TestClient(main.app) as client:
             assert client.get(f"/diligence-cases/{case_id}").status_code==200
+            dossier=client.get(f"/diligence-cases/{case_id}/dossier");assert dossier.status_code==200
+            assert dossier.json()["classification"]=="PRIVATE—AUTHORIZED USE ONLY" and dossier.json()["evidence_coverage"]["exact_passage_linked"]==1
             response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/evidence",json={"claim_ids":[claim_id],"rationale":"Attach dispositive registry evidence"});assert response.status_code==200
             response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"PROPOSE_COMPLETE","rationale":"Registry evidence directly establishes identity","expected_status":"EVIDENCE_COLLECTED"});assert response.status_code==200
             assert client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"APPROVE","rationale":"Attempt unauthorized approval","expected_status":"REVIEW_PROPOSED"}).status_code==403

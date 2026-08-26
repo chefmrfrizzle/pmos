@@ -10,9 +10,12 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import CheckResult,DiligenceCase,DiligenceCheckEvidence,init_db, SessionLocal, Entity
+from pmos_research.db import CheckResult,DiligenceCase,DiligenceCheckEvidence,ReviewQueueItem,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
+from pmos_research.dossier import build_dossier
+from pmos_research.adjudication import AdjudicationInputError,StaleReviewError,adjudicate
+from pmos_research.identity_review import build_review_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -22,6 +25,12 @@ class CheckActionRequest(BaseModel):
     action:str=Field(min_length=3,max_length=40)
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:Optional[str]=Field(default=None,max_length=40)
+
+class IdentityActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=40)
+    rationale:str=Field(min_length=10,max_length=2000)
+    evidence_ids:list[int]=Field(default_factory=list,max_length=25)
+    expected_version:str=Field(min_length=10,max_length=80)
 
 @asynccontextmanager
 async def lifespan(app):
@@ -73,6 +82,30 @@ async def correlation_id(request:Request,call_next):
 def audit_access(session,principal:Principal,action:str,payload:dict):
     append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,payload,principal.correlation_id)
 
+@app.get("/identity-review")
+def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"})
+    with SessionLocal() as s:
+        query=s.query(ReviewQueueItem).filter(ReviewQueueItem.status==status.upper())
+        if queue_type:query=query.filter(ReviewQueueItem.queue_type==queue_type.upper())
+        items=query.order_by(ReviewQueueItem.priority.desc(),ReviewQueueItem.id).limit(limit*5).all();rows=[]
+        for item in items:
+            packet=build_review_packet(s,item.id,include_excerpt=include_excerpt)
+            if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"IDENTITY_REVIEW_LISTED",{"status":status.upper(),"queue_type":queue_type,"limit":limit,"result_count":len(rows),"include_excerpt":include_excerpt});s.commit();return rows
+
+@app.post("/identity-review/{item_id}/actions")
+def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper()=="APPROVE_MATCH";permission="identity:approve" if approval else "identity:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
+    with SessionLocal() as s:
+        packet=build_review_packet(s,item_id)
+        authorize(principal,permission,roles,packet["universe"])
+        try:result=adjudicate(s,item_id,body.action,principal.subject,body.rationale,body.evidence_ids,body.expected_version)
+        except StaleReviewError as exc:raise HTTPException(status_code=409,detail=str(exc))
+        except AdjudicationInputError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
+
 @app.get("/health")
 def health(): return {"ok":True,"service":"pmos-api"}
 
@@ -122,6 +155,14 @@ def diligence_case(case_id:int,principal:Principal=Depends(authenticate_private_
         checks=s.query(CheckResult).filter(CheckResult.case_id==case.id).order_by(CheckResult.id).all();evidence={x.id:sorted(s.scalars(select(DiligenceCheckEvidence.claim_id).where(DiligenceCheckEvidence.check_id==x.id)).all()) for x in checks}
         audit_access(s,principal,"DILIGENCE_CASE_VIEWED",{"case_id":case.id});s.commit()
         return {"id":case.id,"entity_id":case.entity_id,"status":case.status,"risk_tier":case.risk_tier,"as_of":case.as_of,"readiness":readiness(s,case.id),"checks":[{"id":x.id,"code":x.check_code,"status":x.status,"mandatory":x.mandatory,"exception_reason":x.exception_reason,"claim_ids":evidence[x.id],"sufficiency":evidence_sufficiency(s,x.id)} for x in checks]}
+
+@app.get("/diligence-cases/{case_id}/dossier")
+def diligence_dossier(case_id:int,include_passages:bool=True,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        case,entity=_case_scope(s,case_id,principal,"dossiers:read",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
+        result=build_dossier(s,case.id,include_passages=include_passages)
+        audit_access(s,principal,"DILIGENCE_DOSSIER_VIEWED",{"case_id":case.id,"include_passages":include_passages,"claim_count":len(result["claims"])});s.commit()
+        return result
 
 @app.post("/diligence-cases/{case_id}/checks/{check_id}/evidence")
 def attach_check_evidence(case_id:int,check_id:int,body:CheckEvidenceRequest,principal:Principal=Depends(authenticate_private_request)):

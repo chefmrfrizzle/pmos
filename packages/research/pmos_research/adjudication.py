@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 import hashlib
+import secrets
 from sqlalchemy import select
 from .db import (
     AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, Evidence,
@@ -24,12 +25,21 @@ def _version(item:ReviewQueueItem)->str:
     if value.tzinfo is None:value=value.replace(tzinfo=timezone.utc)
     return value.isoformat()
 
-def _evidence_digest(session,evidence_ids)->str|None:
+def _evidence_digest(session,evidence_ids,allowed_entity_ids:set[int]|None=None)->str|None:
     ids=sorted(set(int(x) for x in evidence_ids))
     if not ids:return None
     rows=session.scalars(select(Evidence).where(Evidence.id.in_(ids))).all()
     if len(rows)!=len(ids):raise AdjudicationInputError("all evidence IDs must exist")
+    if allowed_entity_ids is not None and any(x.entity_id not in allowed_entity_ids for x in rows):raise AdjudicationInputError("identity evidence must belong to an identity under review")
     return hashlib.sha256("|".join(sorted(x.content_hash for x in rows)).encode()).hexdigest()
+
+def _review_identity_ids(session,item:ReviewQueueItem,decision:ResolutionDecision)->set[int]:
+    raw=session.get(RawImportRow,decision.raw_row_id);ids=set()
+    if item.queue_type=="ENTITY":ids.update(x for x in (decision.candidate_entity_id,raw.entity_id if raw else None) if x)
+    elif item.queue_type=="CONTACT":
+        contacts=[session.get(Contact,x) for x in (decision.candidate_contact_id,raw.contact_id if raw else None) if x]
+        ids.update(x.entity_id for x in contacts if x and x.entity_id)
+    return ids
 
 def _create_proposed_cluster(session,item:ReviewQueueItem,decision:ResolutionDecision,reviewer:str):
     raw=session.get(RawImportRow,decision.raw_row_id)
@@ -67,8 +77,12 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
     if action=="APPROVE_MATCH":
         proposer=next((x.reviewer for x in reversed(prior_events) if x.action=="PROPOSE_MATCH"),None)
         if not proposer or proposer==reviewer:raise AdjudicationInputError("approval requires a different reviewer from the proposer")
-    digest=_evidence_digest(session,evidence_ids)
     decision=session.get(ResolutionDecision,item.resolution_decision_id)
+    digest=_evidence_digest(session,evidence_ids,_review_identity_ids(session,item,decision))
+    if action in {"PROPOSE_MATCH","APPROVE_MATCH"} and not digest:raise AdjudicationInputError("match decisions require scoped evidence snapshots")
+    if action=="APPROVE_MATCH":
+        proposal=next((x for x in reversed(prior_events) if x.action=="PROPOSE_MATCH"),None)
+        if not proposal or not secrets.compare_digest(proposal.evidence_hash or "",digest or ""):raise AdjudicationInputError("approval must review the proposal evidence package")
     if action=="PROPOSE_MATCH":_create_proposed_cluster(session,item,decision,reviewer)
     if action in {"APPROVE_MATCH","REJECT_MATCH","MARK_CONFLICT"}:
         cluster=session.scalar(select(IdentityCluster).join(IdentityMembership).where(
