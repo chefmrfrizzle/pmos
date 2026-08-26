@@ -17,6 +17,7 @@ JOBS={
     "pdf-requeue":"requeue_pdf_candidates.py",
     "source-reverification":"reverify_sources.py",
     "control-assurance":"assure_private_controls.py",
+    "approved-export":"execute_approved_export.py",
     "identity-audit":"audit_identity_matches.py",
     "lei-research":"research_lei_candidates.py",
     "ledger-verify":"verify_audit_ledger.py",

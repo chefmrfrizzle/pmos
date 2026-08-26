@@ -142,11 +142,13 @@ Run only one universe:
 ./.venv/bin/python scripts/research_universe.py --universe insurance
 ```
 
-Generate a due-diligence export:
+Broad direct exports are disabled. Request a single-case dossier through the authenticated private API, obtain independent `EXPORTER`/`ADMIN` approval after a passing control-assurance run, then execute the approved request locally on encrypted private storage:
 
 ```bash
-make export
+./.venv/bin/python scripts/execute_approved_export.py --request-id 123 --actor export-operations
 ```
+
+The requester cannot approve or execute their own request. Approval expires, output is JSON only, and the owner-only artifact and manifest remain beneath `PMOS_PRIVATE_ROOT/exports`. No private export is served by the public application.
 
 The engine records snapshots and diffs. A changed title, page, legal name, domain or mandate creates a review item instead of silently overwriting the previous fact.
 
@@ -236,7 +238,7 @@ pmos-public/
 │   ├── seed_universe.py
 │   ├── research_universe.py
 │   ├── import_private.py
-│   ├── export_due_diligence.py
+│   ├── execute_approved_export.py
 │   └── train_priority_model.py
 ├── data/
 │   └── public/              public-safe seeds only

@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,ResearchPassageCandidate,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -21,6 +21,7 @@ from pmos_research.passage_review import build_passage_packet
 from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
 from pmos_research.evidence_route_review import build_route_packet
 from pmos_research.change_review import ChangeReviewError,adjudicate_change,build_change_packet
+from pmos_research.export_governance import ExportGovernanceError,adjudicate_export_request,request_dossier_export
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -52,6 +53,16 @@ class ChangeActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=20)
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
+
+class ExportRequestCreate(BaseModel):
+    case_id:int=Field(gt=0)
+    purpose:str=Field(min_length=3,max_length=500)
+    expires_hours:int=Field(default=24,ge=1,le=72)
+
+class ExportActionRequest(BaseModel):
+    action:str=Field(min_length=6,max_length=10)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:str=Field(min_length=5,max_length=30)
 
 @asynccontextmanager
 async def lifespan(app):
@@ -184,6 +195,36 @@ def source_change_action(event_id:int,body:ChangeActionRequest,principal:Princip
         try:result=adjudicate_change(s,event_id,body.action,principal.subject,body.rationale,body.expected_status)
         except ChangeReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"SOURCE_CHANGE_ACTION",{"event_id":event_id,"action":body.action.upper(),"resulting_state":result["resulting_state"]});s.commit();return result
+
+def _export_packet(session,request_id:int):
+    request=session.get(ExportRequest,request_id)
+    if not request:raise HTTPException(status_code=404,detail="not found")
+    case=session.get(DiligenceCase,request.case_id);entity=session.get(Entity,case.entity_id) if case else None
+    if not case or not entity:raise HTTPException(status_code=409,detail="export request scope is invalid")
+    return request,case,entity,{"id":request.id,"case_id":request.case_id,"scope":request.scope,"format":request.format,"purpose":request.purpose,"requester":request.requester,"status":request.status,"expires_at":request.expires_at,"approved_by":request.approved_by,"artifact_name":request.artifact_name,"artifact_sha256":request.artifact_sha256,"universe":entity.universe}
+
+@app.post("/exports/requests")
+def create_export_request(body:ExportRequestCreate,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        case,entity=_case_scope(s,body.case_id,principal,"exports:request",{"RESEARCHER","REVIEWER","ADMIN"})
+        try:request=request_dossier_export(s,case.id,body.purpose,principal.subject,body.expires_hours)
+        except ExportGovernanceError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"EXPORT_REQUEST_CREATED",{"request_id":request.id,"case_id":case.id,"expires_at":request.expires_at.isoformat()});s.commit();return _export_packet(s,request.id)[3]
+
+@app.get("/exports/requests/{request_id}")
+def get_export_request(request_id:int,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        request,case,entity,packet=_export_packet(s,request_id);authorize(principal,"exports:read",{"RESEARCHER","REVIEWER","EXPORTER","ADMIN"},entity.universe)
+        if principal.subject!=request.requester and not principal.roles.intersection({"EXPORTER","ADMIN"}):raise HTTPException(status_code=403,detail="request ownership is required")
+        audit_access(s,principal,"EXPORT_REQUEST_VIEWED",{"request_id":request.id,"status":request.status});s.commit();return packet
+
+@app.post("/exports/requests/{request_id}/actions")
+def decide_export_request(request_id:int,body:ExportActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        request,case,entity,packet=_export_packet(s,request_id);authorize(principal,"exports:approve",{"EXPORTER","ADMIN"},entity.universe)
+        try:request=adjudicate_export_request(s,request.id,body.action,principal.subject,body.rationale,body.expected_status)
+        except ExportGovernanceError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"EXPORT_REQUEST_DECIDED",{"request_id":request.id,"action":body.action.upper(),"resulting_state":request.status});s.commit();return _export_packet(s,request.id)[3]
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"pmos-api"}

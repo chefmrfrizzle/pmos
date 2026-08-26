@@ -292,6 +292,35 @@ class ControlAssuranceRun(Base):
     actor: Mapped[str] = mapped_column(String(150))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class ExportRequest(Base):
+    __tablename__ = "export_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("diligence_cases.id"), index=True)
+    scope: Mapped[str] = mapped_column(String(60), default="DILIGENCE_DOSSIER")
+    format: Mapped[str] = mapped_column(String(20), default="JSON")
+    purpose: Mapped[str] = mapped_column(Text)
+    requester: Mapped[str] = mapped_column(String(150), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="REQUESTED", index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    executed_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    artifact_name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    artifact_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+class ExportRequestEvent(Base):
+    __tablename__ = "export_request_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    export_request_id: Mapped[int] = mapped_column(ForeignKey("export_requests.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(30))
+    resulting_state: Mapped[str] = mapped_column(String(30))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class DiligenceCase(Base):
     __tablename__ = "diligence_cases"
     id: Mapped[int] = mapped_column(primary_key=True)

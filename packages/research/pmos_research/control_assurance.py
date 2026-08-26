@@ -9,7 +9,7 @@ from .audit_ledger import verify_ledger
 from .case_checks import evidence_sufficiency
 from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,
-    CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,
+    CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
     EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     RelationshipAssertionEvidence,ResearchDocumentSnapshot,
@@ -87,6 +87,12 @@ def run_control_assurance(session)->dict:
         actions=session.scalars(select(SourceChangeReviewEvent).where(SourceChangeReviewEvent.change_event_id==event.id).order_by(SourceChangeReviewEvent.id)).all()
         bad+=not actions or actions[-1].resulting_state!=event.status
     controls.append(_control("source_change_review_history",len(reviewed_changes),bad))
+
+    exports=session.scalars(select(ExportRequest).where(ExportRequest.status=="EXPORTED")).all();bad=0
+    for request in exports:
+        events=session.scalars(select(ExportRequestEvent).where(ExportRequestEvent.export_request_id==request.id).order_by(ExportRequestEvent.id)).all();approved=next((x for x in events if x.action=="APPROVE"),None);executed=next((x for x in reversed(events) if x.action=="EXECUTE"),None)
+        bad+=not approved or not executed or approved.actor==request.requester or executed.actor==request.requester or request.approved_by!=approved.actor or request.executed_by!=executed.actor or not request.artifact_name or not request.artifact_sha256
+    controls.append(_control("executed_export_approval_and_manifest_metadata",len(exports),bad))
 
     failures=sum(x["exceptions"] for x in controls)
     return {"classification":"PMOS PRIVATE CONTROL TOTALS — NO RECORD VALUES","generated_at":datetime.now(timezone.utc).isoformat(),"status":"PASS" if failures==0 else "FAIL","control_count":len(controls),"exception_count":failures,"controls":controls}

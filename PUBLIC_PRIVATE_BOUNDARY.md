@@ -3,3 +3,5 @@
 The public repository contains code, schemas, generic configuration, documentation, tests, public universe definitions, and synthetic demonstrations only. Private datasets, contacts, notes, introductions, outreach, scores, credentials, evidence, and databases live in a sibling private directory and must never enter Git, GitHub, Vercel, fixtures, screenshots, documentation, browser bundles, or public APIs.
 
 Before every commit or deployment run `make public-check`. A failure is a release blocker, never something to bypass.
+
+Private dossier exports remain under `PMOS_PRIVATE_ROOT/exports` and are never copied into the public repository or served by the public deployment. A recent passing assurance run, exact case-purpose match, independent approval, separate execution, encrypted local storage, owner-only permissions, expiry, artifact hash, manifest, and ledger events are mandatory. Broad direct exports are disabled.

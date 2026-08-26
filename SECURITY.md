@@ -20,7 +20,7 @@ The local ledger is SHA-256 hash-chained per decision stream and SQLite installs
 
 Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.
 
-Exports resolve beneath `PMOS_PRIVATE_ROOT`, reject repository and symlink escape, neutralize spreadsheet formulas, use owner-only permissions, and emit a classified hash manifest. Authorization, approval, expiry, and encrypted delivery remain mandatory before multi-user production use.
+The legacy broad CSV export is disabled. Private exports are limited to one diligence dossier in JSON, require exact permitted-purpose matching, a recent passing assurance run, independent approval, a different executor, and an unexpired single-use request. Execution resolves beneath `PMOS_PRIVATE_ROOT`, rejects repository and symlink escape, verifies encrypted storage, uses owner-only permissions, rehashes the artifact, emits a classified manifest, and records request/approval/execution events plus ledger anchors. No browser download route exists. Encrypted delivery and recipient verification remain separate operational requirements before distribution.
 
 ## Remaining assurance gates
 
@@ -37,7 +37,7 @@ PDF handling never executes embedded scripts, attachments, links, or actions. Pa
 
 Reverification preserves the last known snapshot and status when retrieval fails. Successful comparisons store hashes and bounded metrics; exact changed text is available only through the authenticated, universe-scoped private review API. Change acknowledgement cannot mutate claims or complete diligence procedures, preventing source drift from silently rewriting institutional history.
 
-The private assurance runner verifies ledger integrity, exact evidence chains, passage/snapshot hashes, accepted identity and identifier maker-checker controls, relationship sufficiency, completed-check approval, attached-route scope, supported-passage approval, and source-change review history. Output contains aggregate populations and exception counts only. Every run is content-hashed, stored privately, and anchored to the ledger; latest-report access is separately role-controlled and audited.
+The private assurance runner verifies ledger integrity, exact evidence chains, passage/snapshot hashes, accepted identity and identifier maker-checker controls, relationship sufficiency, completed-check approval, attached-route scope, supported-passage approval, source-change review history, and executed-export approval metadata. Output contains aggregate populations and exception counts only. Every run is content-hashed, stored privately, and anchored to the ledger; latest-report access is separately role-controlled and audited.
 
 Passage review is private-by-default, role/action authorized, universe-scoped, and audited. The API never accepts a free-standing machine assertion: claim values must already occur in the immutable evidence passage. Maker-checker separation and exact-value comparison prevent self-approval and evidence substitution. Material contradictions route to a conflict record instead of silently creating a supported fact.
 
