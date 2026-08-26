@@ -27,3 +27,16 @@ def test_nonretrievable_candidate_leaves_pending_queue_with_ledgered_outcome():
         candidate=ResearchSourceCandidate(entity_id=entity.id,source_url="https://official.example/report.pdf",source_domain="official.example",document_type="ANNUAL_REPORT",target_predicates_json='["governance"]',discovered_from_url="https://official.example",discovery_score=100);db.add(candidate);db.flush()
         assert record_retrieval_outcome(db,candidate,"unsupported_content_type")=="UNSUPPORTED_CONTENT_TYPE"
         assert candidate.status=="UNSUPPORTED_CONTENT_TYPE"
+
+def test_institutional_phrase_variants_queue_only_requested_predicates():
+    text="The supervisory board oversees our investment objectives. The management company is authorised by the regulator."
+    passages=extract_predicate_passages(text,["governance","mandate","fund_manager","regulatory_status","legal_identity"])
+    assert [x["predicate"] for x in passages]==["fund_manager","governance","mandate","regulatory_status"]
+    assert all(x["passage"] in text for x in passages)
+
+def test_generic_words_do_not_create_passage_candidates():
+    text="Our board met to discuss investments and company news."
+    assert extract_predicate_passages(text,["governance","mandate","legal_identity"])==[]
+
+def test_investing_in_phrase_is_a_review_candidate_but_generic_investments_are_not():
+    assert extract_predicate_passages("We focus on investing in climate technology.",["mandate"])[0]["matched_term"]=="investing in"

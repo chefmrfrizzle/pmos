@@ -11,13 +11,13 @@ from .audit_ledger import append_ledger_event
 from .db import EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
 
 PREDICATE_TERMS={
-    "legal_identity":("legal name","incorporated","registered as","company number"),
-    "legal_status":("statutory body","public authority","established by","legal status"),
-    "regulatory_status":("regulated by","authorised by","authorized by","registered with","licence","license"),
-    "governance":("board of directors","board of trustees","governance","executive committee"),
-    "mandate":("investment strategy","investment mandate","we invest","asset classes","investment approach"),
-    "fund_manager":("fund manager","investment manager","general partner","managed by"),
-    "fund_domicile":("fund domicile","domiciled in","registered office"),
+    "legal_identity":("legal name","incorporated","registered as","company number","registered company","legal entity"),
+    "legal_status":("statutory body","public authority","established by","legal status","formed under the laws"),
+    "regulatory_status":("regulated by","authorised by","authorized by","registered with","supervised by","licence","license"),
+    "governance":("board of directors","board of trustees","supervisory board","governing body","management committee","governance","executive committee"),
+    "mandate":("investment strategy","investment mandate","investment objective","investment objectives","investment focus","investment themes","portfolio strategy","asset allocation","we invest","invests in","investing in","asset classes","investment approach"),
+    "fund_manager":("fund manager","investment manager","management company","investment adviser","investment advisor","general partner","managed by","advised by"),
+    "fund_domicile":("fund domicile","domiciled in","established in","registered in","registered office","formed under the laws"),
     "address":("registered office","head office","contact us","our offices"),
 }
 OUTCOME_STATES={
@@ -46,6 +46,23 @@ def extract_predicate_passages(text:str,predicates:list[str],max_chars:int=700)-
         results.append({"predicate":predicate,"passage":passage,"start_offset":start,"end_offset":end,"matched_term":term,"confidence":.75 if len(hits)>1 else .6})
     return results
 
+def queue_extracted_passages(session,candidate:ResearchSourceCandidate,document:SourceDocument,items:list[dict])->Counter:
+    counts=Counter()
+    for item in items:
+        passage_hash=hashlib.sha256(item["passage"].encode()).hexdigest()
+        passage=session.scalar(select(EvidencePassage).where(EvidencePassage.document_id==document.id,EvidencePassage.passage_hash==passage_hash))
+        if not passage:
+            passage=EvidencePassage(document_id=document.id,page=item.get("page"),section=f"candidate:{item['predicate']}:{item['matched_term']}",start_offset=item["start_offset"],end_offset=item["end_offset"],passage=item["passage"],passage_hash=passage_hash);session.add(passage);session.flush()
+        existing=session.scalar(select(ResearchPassageCandidate).where(ResearchPassageCandidate.source_candidate_id==candidate.id,ResearchPassageCandidate.evidence_passage_id==passage.id,ResearchPassageCandidate.predicate==item["predicate"]))
+        if not existing:
+            session.add(ResearchPassageCandidate(source_candidate_id=candidate.id,evidence_passage_id=passage.id,predicate=item["predicate"],confidence=item["confidence"]));counts["passages_queued"]+=1
+    return counts
+
+def queue_passage_candidates(session,candidate:ResearchSourceCandidate,document:SourceDocument,text:str,predicates:list[str],page:str|None=None)->Counter:
+    """Queue deterministic exact passages for human review; never create or promote claims."""
+    items=[{**item,"page":page} for item in extract_predicate_passages(text,predicates)]
+    return queue_extracted_passages(session,candidate,document,items)
+
 def persist_retrieved_candidate(session,candidate:ResearchSourceCandidate,snapshot:dict,actor:str="research-worker")->Counter:
     if snapshot.get("status")!="ok":raise ValueError("only successful HTML snapshots can be persisted")
     if urlparse(snapshot["url"]).hostname.casefold().removeprefix("www.")!=candidate.source_domain:raise ValueError("retrieved document left the approved source domain")
@@ -62,12 +79,7 @@ def persist_retrieved_candidate(session,candidate:ResearchSourceCandidate,snapsh
         for page in snapshot["pages"]:
             for item in extract_predicate_passages(page.get("text",""),predicates):passages.append({**item,"page":str(page["page"])})
     else:passages=[{**item,"page":None} for item in extract_predicate_passages(text,predicates)]
-    for item in passages[:25]:
-        passage_hash=hashlib.sha256(item["passage"].encode()).hexdigest();passage=session.scalar(select(EvidencePassage).where(EvidencePassage.document_id==document.id,EvidencePassage.passage_hash==passage_hash))
-        if not passage:
-            passage=EvidencePassage(document_id=document.id,page=item["page"],section=f"candidate:{item['predicate']}:{item['matched_term']}",start_offset=item["start_offset"],end_offset=item["end_offset"],passage=item["passage"],passage_hash=passage_hash);session.add(passage);session.flush()
-        existing=session.scalar(select(ResearchPassageCandidate).where(ResearchPassageCandidate.source_candidate_id==candidate.id,ResearchPassageCandidate.evidence_passage_id==passage.id,ResearchPassageCandidate.predicate==item["predicate"]))
-        if not existing:session.add(ResearchPassageCandidate(source_candidate_id=candidate.id,evidence_passage_id=passage.id,predicate=item["predicate"],confidence=item["confidence"]));counts["passages_queued"]+=1
+    counts.update(queue_extracted_passages(session,candidate,document,passages[:25]))
     prior=candidate.status;candidate.status="RETRIEVED_REVIEW_REQUIRED";candidate.updated_at=datetime.now(timezone.utc)
     append_ledger_event(session,"SOURCE_CANDIDATE",candidate.id,actor,"SYSTEM","DOCUMENT_RETRIEVED",{"entity_id":candidate.entity_id,"prior_state":prior,"resulting_state":candidate.status,"document_id":document.id,"content_hash":digest,"target_predicates":predicates,"passages_queued":counts["passages_queued"]})
     session.flush();counts["retrieved"]+=1;return counts
