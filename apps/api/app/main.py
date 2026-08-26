@@ -28,6 +28,7 @@ from pmos_research.private_sale import PrivateSaleError,adjudicate_gate,open_pri
 from pmos_research.private_sale_review import build_private_sale_packet
 from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate_jurisdiction,build_jurisdiction_packet
 from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_batch_packet,freeze_review_batch
+from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,close_batch,revoke_assignment
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -90,6 +91,15 @@ class EvidenceBatchRequest(BaseModel):
     predicate:Optional[str]=Field(default=None,max_length=120)
     min_confidence:float=Field(default=0,ge=0,le=1)
     limit:int=Field(default=50,ge=1,le=100)
+
+class EvidenceAssignmentRequest(BaseModel):
+    reviewer:str=Field(min_length=1,max_length=150)
+    reviewer_role:str=Field(min_length=5,max_length=40)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expires_hours:int=Field(default=24,ge=1,le=168)
+
+class EvidenceLifecycleRequest(BaseModel):
+    rationale:str=Field(min_length=10,max_length=2000)
 
 class RoutingActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=20)
@@ -327,12 +337,40 @@ def evidence_review_batch_detail(batch_id:int,principal:Principal=Depends(authen
         except EvidenceReviewBatchError as exc:raise HTTPException(status_code=404,detail=str(exc))
         authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["criteria"]["universe"]);audit_access(s,principal,"EVIDENCE_REVIEW_BATCH_READ",{"batch_id":batch_id,"manifest_hash":packet["manifest_hash"],"manifest_valid":packet["manifest_valid"]});s.commit();return packet
 
+@app.post("/evidence-review/batches/{batch_id}/assignments")
+def evidence_review_assignment_create(batch_id:int,body:EvidenceAssignmentRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_batch_packet(s,batch_id);authorize(principal,"evidence:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:assignment=assign_reviewer(s,batch_id,body.reviewer,body.reviewer_role,principal.subject,body.rationale,body.expires_hours)
+        except EvidenceReviewAssignmentError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"EVIDENCE_REVIEW_ASSIGNED",{"batch_id":batch_id,"assignment_id":assignment.id,"reviewer":assignment.reviewer,"reviewer_role":assignment.reviewer_role,"expires_at":assignment.expires_at.isoformat()});s.commit();return {"id":assignment.id,"batch_id":batch_id,"reviewer":assignment.reviewer,"reviewer_role":assignment.reviewer_role,"status":assignment.status,"expires_at":assignment.expires_at.isoformat()}
+
+@app.post("/evidence-review/assignments/{assignment_id}/revoke")
+def evidence_review_assignment_revoke(assignment_id:int,body:EvidenceLifecycleRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        from pmos_research.db import EvidenceReviewAssignment
+        assignment=s.get(EvidenceReviewAssignment,assignment_id)
+        if not assignment:raise HTTPException(status_code=404,detail="unknown evidence review assignment")
+        packet=build_batch_packet(s,assignment.batch_id);authorize(principal,"evidence:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:assignment=revoke_assignment(s,assignment_id,principal.subject,body.rationale)
+        except EvidenceReviewAssignmentError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"EVIDENCE_REVIEW_ASSIGNMENT_REVOKED",{"assignment_id":assignment.id,"batch_id":assignment.batch_id});s.commit();return {"id":assignment.id,"status":assignment.status}
+
+@app.post("/evidence-review/batches/{batch_id}/close")
+def evidence_review_batch_close(batch_id:int,body:EvidenceLifecycleRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_batch_packet(s,batch_id);authorize(principal,"evidence:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:batch=close_batch(s,batch_id,principal.subject,body.rationale)
+        except EvidenceReviewAssignmentError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"EVIDENCE_REVIEW_BATCH_CLOSED",{"batch_id":batch.id});s.commit();return {"id":batch.id,"status":batch.status}
+
 @app.post("/evidence-review/passages/{candidate_id}/actions")
 def passage_review_action(candidate_id:int,body:PassageActionRequest,principal:Principal=Depends(authenticate_private_request)):
     approval=body.action.upper()=="APPROVE_SUPPORT";permission="evidence:approve" if approval else "evidence:write";roles={"REVIEWER","COUNSEL","ADMIN"} if approval else {"RESEARCHER","REVIEWER","COUNSEL","ADMIN"}
     with SessionLocal() as s:
         packet=build_passage_packet(s,candidate_id);authorize(principal,permission,roles,packet["universe"])
-        try:result=adjudicate_passage(s,candidate_id,body.action,principal.subject,body.rationale,body.claim_value,body.expected_status,body.review_batch_id)
+        reviewer_role=next((x for x in ("COUNSEL","REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:result=adjudicate_passage(s,candidate_id,body.action,principal.subject,reviewer_role,body.rationale,body.claim_value,body.expected_status,body.review_batch_id)
         except PassageAdjudicationError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"PASSAGE_REVIEW_ACTION",{"candidate_id":candidate_id,"review_batch_id":body.review_batch_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"claim_created":bool(result["claim_id"])});s.commit();return result
 

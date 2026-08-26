@@ -42,6 +42,10 @@ Before assigning a specialist review session, freeze its population with `python
 
 Every passage action must include `review_batch_id`. Proposal, rejection, deferral, and conflict actions fail when the current candidate state or evidence hashes differ from the frozen item. Approval must use the exact batch that contains the linked proposal; creating a replacement batch cannot authorize an earlier proposal. Freeze a new batch instead of bypassing a stale assignment.
 
+An `ADMIN` with `evidence:assign` must assign each reviewer through `POST /evidence-review/batches/{id}/assignments`. Assignments name one reviewer, bind one role, expire within 1–168 hours, and cannot be self-assigned. Revoke authority through `POST /evidence-review/assignments/{id}/revoke`; retire the entire session through `POST /evidence-review/batches/{id}/close`, which revokes every active assignment. Passage actions require an active, unexpired assignment whose role matches the authenticated principal. Approval requires an assigned `REVIEWER` or `COUNSEL`.
+
+Run `python scripts/run_isolated_job.py evidence-review-expire` before an adjudication session and from a bounded scheduler. It records an explicit expiry event for every elapsed active grant. Control assurance fails if an elapsed grant remains active or if assignment history, separation, role, or terminal-state evidence is incomplete.
+
 Approved passage claims create review-only routing candidates when an open case check has the same fact class. Inspect them through `GET /evidence-review/routing`; use the separate `evidence:routing:write` permission to `ATTACH`, `REJECT`, or `DEFER`. Attachment is not check approval. Continue through the check evidence-sufficiency and maker-checker workflow before relying on the case result.
 
 ## Public release

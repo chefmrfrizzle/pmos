@@ -8,7 +8,7 @@ from sqlalchemy import select
 from .audit_ledger import append_ledger_event
 from .evidence_routing import queue_claim_routes
 from .db import (
-    Claim,ClaimEvidence,ConflictCase,ConflictMember,EvidencePassage,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionBinding,
+    Claim,ClaimEvidence,ConflictCase,ConflictMember,EvidencePassage,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionAuthorization,EvidenceReviewDecisionBinding,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
     ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument,
 )
@@ -63,13 +63,16 @@ def _create_claim(session,candidate,source,passage,document,value,status)->Claim
     claim=Claim(entity_id=source.entity_id,field=candidate.predicate,value=value,source_url=document.source_url,source_type=document.source_type,confidence=candidate.confidence,verification_status=status,extractor="specialist_passage_adjudication_v1",evidence_hash=document.content_hash)
     session.add(claim);session.flush();session.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=candidate.confidence,supports=True));session.flush();return claim
 
-def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rationale:str,claim_value:str|None=None,expected_status:str|None=None,review_batch_id:int|None=None):
+def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,reviewer_role:str,rationale:str,claim_value:str|None=None,expected_status:str|None=None,review_batch_id:int|None=None):
     candidate,source,passage,document=_context(session,candidate_id)
     if not reviewer.strip() or len(rationale.strip())<10:raise PassageAdjudicationError("reviewer and substantive rationale are required")
     if expected_status is not None and candidate.status!=expected_status:raise PassageAdjudicationError("passage candidate changed; reload before deciding")
     action=action.upper();prior=candidate.status
     if not review_batch_id:raise PassageAdjudicationError("review_batch_id is required")
     batch_item=_batch_item(session,review_batch_id,candidate,passage,document,action)
+    from .evidence_review_assignment import EvidenceReviewAssignmentError,require_assignment
+    try:assignment=require_assignment(session,review_batch_id,reviewer,reviewer_role,action=="APPROVE_SUPPORT")
+    except EvidenceReviewAssignmentError as exc:raise PassageAdjudicationError(str(exc)) from exc
     transitions={
         "HUMAN_REVIEW_REQUIRED":{"PROPOSE_SUPPORT":"SUPPORT_PROPOSED","REJECT":"REJECTED","DEFER":"DEFERRED","MARK_CONFLICT":"CONFLICT"},
         "DEFERRED":{"PROPOSE_SUPPORT":"SUPPORT_PROPOSED","REJECT":"REJECTED","MARK_CONFLICT":"CONFLICT"},
@@ -102,6 +105,6 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
         existing=set(session.scalars(select(ConflictMember.claim_id).where(ConflictMember.conflict_id==conflict.id)).all())
         for claim_id in sorted(member_ids-existing):session.add(ConflictMember(conflict_id=conflict.id,claim_id=claim_id))
     candidate.status=result
-    event=ResearchPassageAdjudicationEvent(passage_candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale.strip(),claim_value=value,resulting_claim_id=claim.id if claim else None);session.add(event);session.flush();session.add(EvidenceReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id))
-    append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,"REVIEWER",action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"review_batch_id":review_batch_id,"review_batch_manifest_hash":session.get(EvidenceReviewBatch,review_batch_id).manifest_hash,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":hashlib.sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"evidence_controls":controls,"rationale":rationale.strip()})
+    event=ResearchPassageAdjudicationEvent(passage_candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale.strip(),claim_value=value,resulting_claim_id=claim.id if claim else None);session.add(event);session.flush();session.add(EvidenceReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id));session.add(EvidenceReviewDecisionAuthorization(adjudication_event_id=event.id,assignment_id=assignment.id))
+    append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,reviewer_role.upper(),action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"review_batch_id":review_batch_id,"assignment_id":assignment.id,"review_batch_manifest_hash":session.get(EvidenceReviewBatch,review_batch_id).manifest_hash,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":hashlib.sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"evidence_controls":controls,"rationale":rationale.strip()})
     session.flush();return {"candidate_id":candidate.id,"prior_state":prior,"resulting_state":result,"claim_id":claim.id if claim else None,"routing_candidate_ids":route_ids}

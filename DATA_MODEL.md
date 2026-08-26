@@ -14,6 +14,8 @@ Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `
 
 `EvidenceReviewDecisionBinding` binds each passage adjudication event to its frozen batch item. Support approval is valid only when proposal and approval reference the same item, their evidence hashes still match the source chain, and maker-checker controls pass. This prevents decisions from drifting across assignments or silently inheriting changed evidence.
 
+`EvidenceReviewAssignment` grants a named reviewer a single role on one frozen batch for a bounded period. Assignment, expiry, revocation, and batch closure remain auditable through assignment events and the hash-chain ledger. `EvidenceReviewDecisionAuthorization` records the exact grant used by each decision so later revocation does not erase the historical authorization basis.
+
 `IdentityCluster` and `IdentityMembership` represent proposed, accepted, or rejected canonicalization without deleting source entities. `EntityAlias` retains sourced names. Institutional structures distinguish legal entities and vehicles and preserve metric type, currency, basis, and date rather than collapsing AUM, AUA, NAV, commitments, target close, and final close.
 
 An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.

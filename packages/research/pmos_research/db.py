@@ -300,6 +300,37 @@ class EvidenceReviewDecisionBinding(Base):
     adjudication_event_id: Mapped[int] = mapped_column(ForeignKey("research_passage_adjudication_events.id"), unique=True, index=True)
     bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class EvidenceReviewAssignment(Base):
+    __tablename__ = "evidence_review_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_batches.id"), index=True)
+    reviewer: Mapped[str] = mapped_column(String(150), index=True)
+    reviewer_role: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(30), default="ACTIVE", index=True)
+    assigned_by: Mapped[str] = mapped_column(String(150))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    revocation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class EvidenceReviewAssignmentEvent(Base):
+    __tablename__ = "evidence_review_assignment_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_assignments.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    resulting_state: Mapped[str] = mapped_column(String(30))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class EvidenceReviewDecisionAuthorization(Base):
+    __tablename__ = "evidence_review_decision_authorizations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    adjudication_event_id: Mapped[int] = mapped_column(ForeignKey("research_passage_adjudication_events.id"), unique=True, index=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_assignments.id"), index=True)
+    authorized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class ClaimCheckRoutingCandidate(Base):
     __tablename__ = "claim_check_routing_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)
