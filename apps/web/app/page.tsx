@@ -1,23 +1,2 @@
-const nav=["Command Center","Counterparties","People","Institutions","Relationships","Universes","Evidence","Opportunities","Research Queue","Verification","Outreach"]
-const buyers=[
- {name:"Northstar Collection",region:"Zurich · Europe",fit:94,why:"Post-war focus · advisor path",status:"Qualified"},
- {name:"Aster Family Office",region:"Singapore · APAC",fit:89,why:"Acquisition mandate · liquidity",status:"Review"},
- {name:"Meridian Arts Trust",region:"New York · Americas",fit:84,why:"Museum lending history",status:"Qualified"}
-]
-const checks=[
- ["Authority to sell","PASS","Signed authority; identity corroborated"],
- ["Provenance chain","PASS — EXCEPTIONS","One 1998 invoice requires original"],
- ["Attribution","PASS","Catalogue raisonné reference matched"],
- ["Restitution","PROVENANCE REVIEW","Specialist review open"],
- ["Export / cultural property","PASS","No current restriction identified"],
-]
-export default function Page(){return <div className="app">
- <aside className="side"><div className="lockup"><span className="mark">P</span><div><b>PMOS</b><small>Private Markets OS</small></div></div><nav>{nav.map((x,i)=><a className={i===0?"active":""} key={x} href={`#${x.toLowerCase().replaceAll(" ","-")}`}><span className="navdot"/>{x}{x==="Verification"&&<em>7</em>}</a>)}</nav><div className="safe"><span>PRIVATE MODE</span><b>Local intelligence sealed</b><small>No private data in this demonstration</small></div></aside>
- <main><header><button className="mobileMenu" aria-label="Open navigation">☰</button><div><p className="eyebrow">PRIVATE SALES · SYNTHETIC DEMONSTRATION</p><h1>Command Center</h1></div><div className="actions"><button>⌕ Search</button><button>Export brief</button><button className="primary">Open deal room</button></div></header>
- <section className="notice"><span>DEMONSTRATION DATA</span><p>Every collector, relationship and transaction detail on this screen is synthetic.</p><button>View data boundary</button></section>
- <section className="deal"><div><p className="eyebrow light">PRIVATE SALE · PM-2026-014</p><h2>Untitled, 1988</h2><p>Post-war & contemporary · Synthetic artist · Oil and mixed media on canvas</p><div className="dealmeta"><span>Indicative value <b>$18–24M</b></span><span>Stage <b>Specialist review</b></span><span>Owner <b>Private Sales</b></span></div></div><div className="readiness"><div className="ring"><strong>82</strong><small>/ 100</small></div><div><b>Private sale readiness</b><p>4 of 5 critical gates supported</p><span>PASS — EXCEPTIONS</span></div></div></section>
- <section className="metrics"><article><small>Evidence completeness</small><b>87%</b><div className="bar"><i style={{width:"87%"}}/></div><p>34 of 39 required items</p></article><article><small>Collector matches</small><b>12</b><p><span className="up">+3</span> since last review</p></article><article><small>Open exceptions</small><b>3</b><p>1 requires counsel</p></article><article><small>Relationship paths</small><b>8</b><p>5 warm · 3 direct</p></article></section>
- <div className="columns"><section className="panel"><div className="panelhead"><div><p className="eyebrow">EXCEPTION ENGINE</p><h3>Transaction readiness</h3></div><button>View all evidence →</button></div>{checks.map(([a,b,c])=><div className="check" key={a}><span className={`state ${b.includes("REVIEW")?"warn":"ok"}`}>{b.includes("REVIEW")?"!":"✓"}</span><div><b>{a}</b><p>{c}</p></div><label className={b.includes("REVIEW")?"amber":"green"}>{b}</label></div>)}</section>
- <section className="panel"><div className="panelhead"><div><p className="eyebrow">COLLECTOR MATCH</p><h3>Highest-fit counterparties</h3></div><button>Explain ranking</button></div>{buyers.map((x,n)=><div className="buyer" key={x.name}><span className="avatar">{n+1}</span><div className="buyerinfo"><b>{x.name}</b><small>{x.region}</small><p>{x.why}</p></div><div className="fit"><strong>{x.fit}</strong><small>FIT</small><span>{x.status}</span></div></div>)}</section></div>
- <section className="panel graph"><div className="panelhead"><div><p className="eyebrow">RELATIONSHIP GRAPH UPDATE</p><h3>Evidence-backed transaction path</h3></div><span className="legend">● Verified &nbsp; ◐ Review &nbsp; ○ Candidate</span></div><div className="graphline"><div className="node asset"><small>ASSET</small><b>Untitled, 1988</b></div><span>authority</span><div className="node"><small>CONSIGNOR</small><b>Arden Holdings</b></div><span>advised by</span><div className="node"><small>ADVISOR</small><b>Claremont Art</b></div><span>introduces</span><div className="node gold"><small>COLLECTOR</small><b>Northstar</b></div></div><p className="caption">PMOS preserves specialist judgment: graph edges surface evidence and confidence; specialists decide what proceeds.</p></section>
- </main></div>}
+import PmosApp from './components/pmos-app'
+export default function Page(){return <PmosApp view="command"/>}

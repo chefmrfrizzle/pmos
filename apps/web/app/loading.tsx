@@ -1,0 +1,1 @@
+export default function Loading(){return <main className="statePage" aria-live="polite"><div className="spinner"/><h1>Preparing the evidence graph…</h1><p>Loading the public-safe demonstration.</p></main>}

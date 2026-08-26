@@ -28,6 +28,8 @@ __pycache__/
 node_modules/
 .next/
 .vercel/
+test-results/
+playwright-report/
 
 # macOS
 .DS_Store

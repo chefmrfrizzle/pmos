@@ -199,3 +199,40 @@ universes:
       - {name: Apex Group, country: BM, city: Hamilton, url: https://www.apexgroup.com/}
       - {name: Alter Domus, country: LU, city: Luxembourg, url: https://alterdomus.com/}
       - {name: Citco, country: KY, city: George Town, url: https://www.citco.com/}
+
+  venture_capital:
+    label: Venture Capital
+    entities:
+      - {name: Sequoia Capital, country: US, city: Menlo Park, url: https://sequoiacap.com/}
+      - {name: Andreessen Horowitz, country: US, city: Menlo Park, url: https://a16z.com/}
+      - {name: Accel, country: US, city: Palo Alto, url: https://www.accel.com/}
+      - {name: Index Ventures, country: GB, city: London, url: https://www.indexventures.com/}
+      - {name: General Catalyst, country: US, city: Cambridge, url: https://www.generalcatalyst.com/}
+      - {name: Lightspeed Venture Partners, country: US, city: Menlo Park, url: https://lsvp.com/}
+
+  private_equity:
+    label: Private Equity
+    entities:
+      - {name: Blackstone, country: US, city: New York, url: https://www.blackstone.com/}
+      - {name: KKR, country: US, city: New York, url: https://www.kkr.com/}
+      - {name: Apollo Global Management, country: US, city: New York, url: https://www.apollo.com/}
+      - {name: Carlyle, country: US, city: Washington, url: https://www.carlyle.com/}
+      - {name: TPG, country: US, city: San Francisco, url: https://www.tpg.com/}
+
+  hedge_funds:
+    label: Hedge Funds & Absolute Return
+    entities:
+      - {name: Bridgewater Associates, country: US, city: Westport, url: https://www.bridgewater.com/}
+      - {name: AQR Capital Management, country: US, city: Greenwich, url: https://www.aqr.com/}
+      - {name: Man Group, country: GB, city: London, url: https://www.man.com/}
+      - {name: Millennium Management, country: US, city: New York, url: https://www.mlp.com/}
+      - {name: Citadel, country: US, city: Miami, url: https://www.citadel.com/}
+
+  corporate_venture_capital:
+    label: Corporate Venture Capital
+    entities:
+      - {name: GV, country: US, city: San Francisco, url: https://www.gv.com/}
+      - {name: Intel Capital, country: US, city: Santa Clara, url: https://www.intelcapital.com/}
+      - {name: M12, country: US, city: Redmond, url: https://m12.vc/}
+      - {name: Salesforce Ventures, country: US, city: San Francisco, url: https://salesforceventures.com/}
+      - {name: Qualcomm Ventures, country: US, city: San Diego, url: https://www.qualcommventures.com/}
