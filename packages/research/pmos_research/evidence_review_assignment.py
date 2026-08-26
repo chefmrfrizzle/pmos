@@ -4,7 +4,8 @@ from datetime import datetime,timedelta,timezone
 from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
-from .db import EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch
+from .db import EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch,EvidenceReviewBatchItem
+from .evidence_review_batch import build_batch_packet
 
 ROLES={"RESEARCHER","REVIEWER","COUNSEL"}
 APPROVER_ROLES={"REVIEWER","COUNSEL"}
@@ -45,6 +46,12 @@ def require_assignment(session,batch_id:int,reviewer:str,reviewer_role:str,appro
         raise EvidenceReviewAssignmentError("active unexpired review assignment is required")
     if assignment.reviewer_role!=reviewer_role.upper() or (approval and assignment.reviewer_role not in APPROVER_ROLES):raise EvidenceReviewAssignmentError("assignment role does not authorize this action")
     return assignment
+
+def assigned_evidence_batch_items(session,batch_id:int,reviewer:str,reviewer_role:str)->list[EvidenceReviewBatchItem]:
+    batch=session.get(EvidenceReviewBatch,batch_id)
+    if not batch or batch.status!="FROZEN" or not build_batch_packet(session,batch_id)["manifest_valid"]:raise EvidenceReviewAssignmentError("a valid frozen evidence review batch is required")
+    require_assignment(session,batch_id,reviewer,reviewer_role)
+    return session.scalars(select(EvidenceReviewBatchItem).where(EvidenceReviewBatchItem.batch_id==batch.id).order_by(EvidenceReviewBatchItem.id)).all()
 
 def expire_assignments(session,actor:str="evidence-assignment-expiry-worker")->dict:
     rows=session.scalars(select(EvidenceReviewAssignment).where(EvidenceReviewAssignment.status=="ACTIVE")).all();expired=0

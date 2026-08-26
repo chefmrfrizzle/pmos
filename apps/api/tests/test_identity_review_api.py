@@ -22,15 +22,17 @@ def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monk
         evidence=Evidence(entity_id=candidate.id,source_url="https://source.example/about",source_type="official",content_hash="c"*64,text_excerpt="Source Capital LP official site");wrong=Evidence(entity_id=unrelated.id,source_url="https://unrelated.example",source_type="official",content_hash="d"*64)
         db.add_all([evidence,wrong]);db.flush();batch=freeze_identity_batch(db,"assigner","venture_capital");maker_assignment=assign_identity_reviewer(db,batch.id,"maker","RESEARCHER","assigner","Maker assigned for identity proposal");assign_identity_reviewer(db,batch.id,"checker","REVIEWER","assigner","Checker assigned for independent approval");db.commit();item_id=item.id;evidence_id=evidence.id;wrong_id=wrong.id;batch_id=batch.id;maker_assignment_id=maker_assignment.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
+    observer=Principal("observer",frozenset({"REVIEWER"}),frozenset({"identity:review"}),frozenset({"venture_capital"}),"oidc","observer-correlation","tenant-a",frozenset({"identity adjudication"}),"identity adjudication");main.app.dependency_overrides[authenticate_private_request]=lambda:observer
+    with TestClient(main.app) as client:assert client.get("/identity-review",params={"review_batch_id":batch_id}).status_code==403
     maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"identity:review","identity:write"}),frozenset({"venture_capital"}),"oidc","maker-correlation","tenant-a",frozenset({"identity adjudication"}),"identity adjudication")
     main.app.dependency_overrides[authenticate_private_request]=lambda:maker
     try:
         with TestClient(main.app) as client:
-            listing=client.get("/identity-review");assert listing.status_code==200 and len(listing.json())==1
+            listing=client.get("/identity-review",params={"review_batch_id":batch_id});assert listing.status_code==200 and len(listing.json())==1
             packet=listing.json()[0];assert packet["raw_row_exposed"] is False and "secret" not in str(packet)
-            assert len(client.get("/identity-review",params={"resolution_state":"PROBABLE_MATCH","min_priority":90}).json())==1
-            assert client.get("/identity-review",params={"resolution_state":"EXACT_MATCH"}).status_code==422
-            assert client.get("/identity-review",params={"min_priority":101}).status_code==422
+            assert len(client.get("/identity-review",params={"review_batch_id":batch_id,"resolution_state":"PROBABLE_MATCH","min_priority":90}).json())==1
+            assert client.get("/identity-review",params={"review_batch_id":batch_id,"resolution_state":"EXACT_MATCH"}).status_code==422
+            assert client.get("/identity-review",params={"review_batch_id":batch_id,"min_priority":101}).status_code==422
             body={"action":"PROPOSE_MATCH","rationale":"Official evidence supports the proposed identity match","evidence_ids":[wrong_id],"expected_version":packet["version"],"review_batch_id":batch_id}
             assert client.post(f"/identity-review/{item_id}/actions",json=body).status_code==422
             body["evidence_ids"]=[evidence_id];proposal=client.post(f"/identity-review/{item_id}/actions",json=body);assert proposal.status_code==200

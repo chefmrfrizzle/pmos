@@ -24,6 +24,8 @@ Mention decisions additionally require a content-addressed frozen batch and a na
 
 Exact unresolved mention text and passages are not universe-wide browse data. `GET /relationship-mentions` requires the caller’s frozen batch ID and an active assignment whose reviewer identity and role match the authenticated principal. Batch preparation and staffing expose only manifest metadata, fingerprints, IDs, and counts, allowing administrators to operate the queue without receiving record text.
 
+The same need-to-know rule applies to exact evidence passage packets and private identity comparison packets. Their list routes require a valid frozen batch and an active, unexpired assignment matching the authenticated subject and role. Universe permission alone permits aggregate batch preparation and staffing, not browsing record content.
+
 The local ledger is SHA-256 hash-chained per decision stream and SQLite installs fail-closed triggers that reject ledger updates and deletes. `scripts/verify_audit_ledger.py` replays every reachable stream and fails on changed payloads, broken predecessor hashes, or changed event hashes. Production PostgreSQL must additionally isolate ledger insert permissions from operational roles, sign periodic roots with an external key, and export roots to independent retention.
 
 Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.

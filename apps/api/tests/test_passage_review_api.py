@@ -21,13 +21,15 @@ def test_passage_review_api_enforces_universe_scope_and_maker_checker(monkeypatc
         db.add(ResearchDocumentSnapshot(source_candidate_id=source.id,source_document_id=document.id,normalized_text=text,text_hash=digest));passage=EvidencePassage(document_id=document.id,section="candidate",passage=text,passage_hash=digest);db.add(passage);db.flush()
         candidate=ResearchPassageCandidate(source_candidate_id=source.id,evidence_passage_id=passage.id,predicate="governance",confidence=.75);db.add(candidate);db.flush();batch=freeze_review_batch(db,"assigner","pension");assign_reviewer(db,batch.id,"maker","RESEARCHER","assigner","Maker assigned for evidence proposal");assign_reviewer(db,batch.id,"checker","REVIEWER","assigner","Checker assigned for independent approval");db.commit();candidate_id=candidate.id;batch_id=batch.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
+    observer=Principal("observer",frozenset({"REVIEWER"}),frozenset({"evidence:review"}),frozenset({"pension"}),"oidc","observer-correlation","tenant-a",frozenset({"internal diligence"}),"internal diligence");main.app.dependency_overrides[authenticate_private_request]=lambda:observer
+    with TestClient(main.app) as client:assert client.get("/evidence-review/passages",params={"review_batch_id":batch_id}).status_code==403
     maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"evidence:review","evidence:write"}),frozenset({"pension"}),"oidc","maker-correlation","tenant-a",frozenset({"internal diligence"}),"internal diligence");main.app.dependency_overrides[authenticate_private_request]=lambda:maker
     try:
         with TestClient(main.app) as client:
-            listing=client.get("/evidence-review/passages");assert listing.status_code==200 and len(listing.json())==1
+            listing=client.get("/evidence-review/passages",params={"review_batch_id":batch_id});assert listing.status_code==200 and len(listing.json())==1
             assert listing.json()[0]["evidence_controls"]["support_eligible"] is True and listing.json()[0]["existing_assertions"]==[]
-            assert len(client.get("/evidence-review/passages",params={"predicate":"governance","min_confidence":.7,"evidence_state":"ELIGIBLE"}).json())==1
-            assert client.get("/evidence-review/passages",params={"evidence_state":"UNKNOWN"}).status_code==422
+            assert len(client.get("/evidence-review/passages",params={"review_batch_id":batch_id,"predicate":"governance","min_confidence":.7,"evidence_state":"ELIGIBLE"}).json())==1
+            assert client.get("/evidence-review/passages",params={"review_batch_id":batch_id,"evidence_state":"UNKNOWN"}).status_code==422
             response=client.post(f"/evidence-review/passages/{candidate_id}/actions",json={"action":"PROPOSE_SUPPORT","rationale":"The passage directly identifies the governance body","claim_value":"Board of Trustees","expected_status":"HUMAN_REVIEW_REQUIRED","review_batch_id":batch_id});assert response.status_code==200
         checker=Principal("checker",frozenset({"REVIEWER"}),frozenset({"evidence:approve"}),frozenset({"pension"}),"oidc","checker-correlation","tenant-a",frozenset({"internal diligence"}),"internal diligence");main.app.dependency_overrides[authenticate_private_request]=lambda:checker
         with TestClient(main.app) as client:

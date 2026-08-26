@@ -4,7 +4,8 @@ from datetime import datetime,timedelta,timezone
 from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
-from .db import IdentityReviewAssignment,IdentityReviewAssignmentEvent,IdentityReviewBatch
+from .db import IdentityReviewAssignment,IdentityReviewAssignmentEvent,IdentityReviewBatch,IdentityReviewBatchItem
+from .identity_review_batch import build_identity_batch_packet
 
 ROLES={"RESEARCHER","REVIEWER"};APPROVER_ROLES={"REVIEWER"}
 class IdentityReviewAssignmentError(ValueError):pass
@@ -42,6 +43,12 @@ def require_identity_assignment(session,batch_id:int,reviewer:str,reviewer_role:
         raise IdentityReviewAssignmentError("active unexpired identity assignment is required")
     if assignment.reviewer_role!=reviewer_role.upper() or (approval and assignment.reviewer_role not in APPROVER_ROLES):raise IdentityReviewAssignmentError("identity assignment role does not authorize this action")
     return assignment
+
+def assigned_identity_batch_items(session,batch_id:int,reviewer:str,reviewer_role:str)->list[IdentityReviewBatchItem]:
+    batch=session.get(IdentityReviewBatch,batch_id)
+    if not batch or batch.status!="FROZEN" or not build_identity_batch_packet(session,batch_id)["manifest_valid"]:raise IdentityReviewAssignmentError("a valid frozen identity review batch is required")
+    require_identity_assignment(session,batch_id,reviewer,reviewer_role)
+    return session.scalars(select(IdentityReviewBatchItem).where(IdentityReviewBatchItem.batch_id==batch.id).order_by(IdentityReviewBatchItem.id)).all()
 
 def expire_identity_assignments(session,actor:str="identity-assignment-expiry-worker")->dict:
     rows=session.scalars(select(IdentityReviewAssignment).where(IdentityReviewAssignment.status=="ACTIVE")).all();expired=0

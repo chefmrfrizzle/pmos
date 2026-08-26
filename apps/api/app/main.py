@@ -17,7 +17,7 @@ from pmos_research.dossier import build_dossier
 from pmos_research.adjudication import AdjudicationInputError,StaleReviewError,adjudicate
 from pmos_research.identity_review import build_review_packet
 from pmos_research.identity_review_batch import IdentityReviewBatchError,build_identity_batch_packet,freeze_identity_batch
-from pmos_research.identity_review_assignment import IdentityReviewAssignmentError,assign_identity_reviewer,close_identity_batch,revoke_identity_assignment
+from pmos_research.identity_review_assignment import IdentityReviewAssignmentError,assign_identity_reviewer,assigned_identity_batch_items,close_identity_batch,revoke_identity_assignment
 from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
 from pmos_research.passage_review import build_passage_packet
 from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
@@ -31,7 +31,7 @@ from pmos_research.private_sale import PrivateSaleError,adjudicate_gate,open_pri
 from pmos_research.private_sale_review import build_private_sale_packet
 from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate_jurisdiction,build_jurisdiction_packet
 from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_batch_packet,freeze_review_batch
-from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,close_batch,revoke_assignment
+from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,assigned_evidence_batch_items,close_batch,revoke_assignment
 from pmos_research.publisher_independence import PublisherIndependenceError,adjudicate_publisher_independence,build_publisher_independence_packet,propose_publisher_independence
 from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,assigned_mention_batch_items,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,revoke_mention_assignment
 
@@ -238,20 +238,22 @@ def security_readiness_latest(principal:Principal=Depends(authenticate_private_r
         report=json.loads(run.report_json);audit_access(s,principal,"SECURITY_READINESS_READ",{"readiness_run_id":run.id,"report_hash":run.report_hash,"status":run.status});s.commit();return report
 
 @app.get("/identity-review")
-def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
+def identity_review_queue(review_batch_id:int=Query(gt=0),resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
     authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"})
     normalized_state=resolution_state.upper() if resolution_state else None
     if normalized_state and normalized_state not in {"PROBABLE_MATCH","POSSIBLE_MATCH","CONFLICT","REQUIRES_REVIEW"}:raise HTTPException(status_code=422,detail="unsupported resolution state")
     with SessionLocal() as s:
-        query=s.query(ReviewQueueItem).join(ResolutionDecision).filter(ReviewQueueItem.status==status.upper(),ReviewQueueItem.priority>=min_priority)
-        if queue_type:query=query.filter(ReviewQueueItem.queue_type==queue_type.upper())
-        if normalized_state:query=query.filter(ResolutionDecision.state==normalized_state)
-        items=query.order_by(ReviewQueueItem.priority.desc(),ReviewQueueItem.id).limit(limit*5).all();rows=[]
-        for item in items:
+        reviewer_role=next((x for x in ("REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:batch_items=assigned_identity_batch_items(s,review_batch_id,principal.subject,reviewer_role)
+        except IdentityReviewAssignmentError as exc:raise HTTPException(status_code=403,detail=str(exc))
+        batch_packet=build_identity_batch_packet(s,review_batch_id);authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"},batch_packet["criteria"]["universe"]);rows=[]
+        for batch_item in batch_items:
+            item=s.get(ReviewQueueItem,batch_item.queue_item_id);decision=s.get(ResolutionDecision,item.resolution_decision_id)
+            if item.priority<min_priority or (normalized_state and decision.state!=normalized_state):continue
             packet=build_review_packet(s,item.id,include_excerpt=include_excerpt)
             if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
             if len(rows)>=limit:break
-        audit_access(s,principal,"IDENTITY_REVIEW_LISTED",{"status":status.upper(),"queue_type":queue_type,"resolution_state":normalized_state,"min_priority":min_priority,"limit":limit,"result_count":len(rows),"include_excerpt":include_excerpt});s.commit();return rows
+        audit_access(s,principal,"IDENTITY_REVIEW_LISTED",{"review_batch_id":review_batch_id,"resolution_state":normalized_state,"min_priority":min_priority,"limit":limit,"result_count":len(rows),"include_excerpt":include_excerpt});s.commit();return rows
 
 @app.post("/identity-review/batches")
 def identity_review_batch_create(body:IdentityBatchRequest,principal:Principal=Depends(authenticate_private_request)):
@@ -535,22 +537,25 @@ def private_sale_gate_action(case_id:int,gate_id:int,body:PrivateSaleGateActionR
         result=build_private_sale_packet(s,case_id);audit_access(s,principal,"PRIVATE_SALE_GATE_ACTION",{"case_id":case_id,"gate_id":gate_id,"action":body.action.upper(),"resulting_state":gate.status});s.commit();return result
 
 @app.get("/evidence-review/passages")
-def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",predicate:Optional[str]=None,min_confidence:float=Query(0,ge=0,le=1),evidence_state:Optional[str]=None,limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+def passage_review_queue(review_batch_id:int=Query(gt=0),predicate:Optional[str]=None,min_confidence:float=Query(0,ge=0,le=1),evidence_state:Optional[str]=None,limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
     authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
     normalized_state=evidence_state.upper() if evidence_state else None
     if normalized_state and normalized_state not in {"ELIGIBLE","BLOCKED","STALE","CONFLICT"}:raise HTTPException(status_code=422,detail="unsupported evidence state")
     with SessionLocal() as s:
-        query=s.query(ResearchPassageCandidate).filter(ResearchPassageCandidate.status==status.upper(),ResearchPassageCandidate.confidence>=min_confidence)
-        if predicate:query=query.filter(ResearchPassageCandidate.predicate==predicate.casefold())
-        candidates=query.order_by(ResearchPassageCandidate.confidence.desc(),ResearchPassageCandidate.id).limit(limit*10).all();rows=[]
-        for candidate in candidates:
+        reviewer_role=next((x for x in ("COUNSEL","REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:batch_items=assigned_evidence_batch_items(s,review_batch_id,principal.subject,reviewer_role)
+        except EvidenceReviewAssignmentError as exc:raise HTTPException(status_code=403,detail=str(exc))
+        batch_packet=build_batch_packet(s,review_batch_id);authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},batch_packet["criteria"]["universe"]);rows=[]
+        for batch_item in batch_items:
+            candidate=s.get(ResearchPassageCandidate,batch_item.passage_candidate_id)
+            if candidate.confidence<min_confidence or (predicate and candidate.predicate!=predicate.casefold()):continue
             packet=build_passage_packet(s,candidate.id)
             controls=packet["evidence_controls"]
             state_matches=not normalized_state or (normalized_state=="ELIGIBLE" and controls["support_eligible"]) or (normalized_state=="BLOCKED" and not controls["evidence_eligible"]) or (normalized_state=="STALE" and controls["freshness"]["state"]=="STALE") or (normalized_state=="CONFLICT" and controls["material_open_conflict"])
             if not state_matches:continue
             if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
             if len(rows)>=limit:break
-        audit_access(s,principal,"PASSAGE_REVIEW_LISTED",{"status":status.upper(),"predicate":predicate.casefold() if predicate else None,"min_confidence":min_confidence,"evidence_state":normalized_state,"limit":limit,"result_count":len(rows)});s.commit();return rows
+        audit_access(s,principal,"PASSAGE_REVIEW_LISTED",{"review_batch_id":review_batch_id,"predicate":predicate.casefold() if predicate else None,"min_confidence":min_confidence,"evidence_state":normalized_state,"limit":limit,"result_count":len(rows)});s.commit();return rows
 
 @app.post("/evidence-review/batches")
 def evidence_review_batch_create(body:EvidenceBatchRequest,principal:Principal=Depends(authenticate_private_request)):
