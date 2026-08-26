@@ -128,7 +128,7 @@ Seed the global universe:
 make seed
 ```
 
-Research / refresh official public sources (homepage + same-domain leadership/about/investment/report/contact discovery, evidence snapshots, AUM/contact candidates and LEI lookup):
+Run bounded official-domain identity research for public-registry institutions. Supported assertions receive source-document and exact-passage links; this command does not promote whole entities or research private imports:
 
 ```bash
 make research

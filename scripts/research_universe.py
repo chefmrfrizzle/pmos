@@ -1,62 +1,34 @@
 #!/usr/bin/env python3
+"""Run bounded public-registry research through the controlled claim pipeline."""
 from pathlib import Path
-import argparse, sys
-from datetime import datetime, timezone
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages/research"))
-from pmos_research.db import init_db, SessionLocal, Entity, Evidence, Claim
+from collections import Counter
+import argparse,json,sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"packages/research"))
+from sqlalchemy import select
+from pmos_research.adjudication import normalize_public_url,run_corroboration_job
 from pmos_research.adapters.official_web import OfficialWebAdapter
-from pmos_research.adapters.gleif import search_lei
-from pmos_research.fact_extraction import discover_same_domain_links, extract_claims, identity_supported
+from pmos_research.db import CorroborationJob,Entity,SessionLocal,init_db
 
-ap=argparse.ArgumentParser()
-ap.add_argument("--universe")
-ap.add_argument("--max-pages",type=int,default=6,help="Max official pages fetched per entity")
-ap.add_argument("--limit",type=int,default=0,help="Optional entity limit for test runs")
-args=ap.parse_args()
-init_db(); web=OfficialWebAdapter()
-with SessionLocal() as s:
-    q=s.query(Entity)
-    if args.universe: q=q.filter(Entity.universe==args.universe)
-    entities=q.all()
-    if args.limit: entities=entities[:args.limit]
-    for i,e in enumerate(entities,1):
-        print(f"[{i}/{len(entities)}] {e.name}")
-        confidence=0.0; identity_corroborated=False; queue=[e.official_url] if e.official_url else []; seen=set(); fetched=0
-        while queue and fetched<args.max_pages:
-            url=queue.pop(0)
-            if not url or url in seen: continue
-            seen.add(url)
-            try:
-                snap=web.fetch(url)
-                if snap.get("status")!="ok": continue
-                fetched+=1
-                actual=snap["url"]
-                duplicate=s.query(Evidence).filter_by(entity_id=e.id,source_url=actual,content_hash=snap["hash"]).first()
-                if not duplicate:
-                    s.add(Evidence(entity_id=e.id,source_url=actual,source_type="official",content_hash=snap["hash"],title=snap["title"],text_excerpt=snap["text"][:5000],confidence=1.0))
-                for claim in extract_claims(snap["text"],actual):
-                    exists=s.query(Claim).filter_by(entity_id=e.id,field=claim["field"],value=claim["value"],source_url=actual).first()
-                    if not exists: s.add(Claim(entity_id=e.id,**claim))
-                if identity_supported(e.name,snap["title"]+" "+snap["text"][:10000]):
-                    identity_corroborated=True
-                    exists=s.query(Claim).filter_by(entity_id=e.id,field="official_identity",value=e.name,source_url=actual).first()
-                    if not exists:s.add(Claim(entity_id=e.id,field="official_identity",value=e.name,source_url=actual,source_type="official",confidence=.9,verification_status="SUPPORTED",extractor="deterministic_identity_v1",evidence_hash=snap["hash"]))
-                if fetched==1:
-                    queue.extend(discover_same_domain_links(actual,snap.get("html","") ,limit=max(args.max_pages*2,10)))
-                confidence=max(confidence,.9 if identity_corroborated else .35)
-                print("  fetched",actual)
-            except Exception as ex:
-                print("  official fetch failed:",url,ex)
-        try:
-            leis=search_lei(e.name,e.country)
-            if leis:
-                confidence=max(confidence,0.75)
-                candidate=leis[0]
-                s.add(Claim(entity_id=e.id,field="lei_candidate",value=str(candidate),source_url="https://api.gleif.org/",confidence=0.95))
-                print("  LEI candidate:",candidate)
-        except Exception as ex:
-            print("  LEI lookup failed:",ex)
-        e.evidence_confidence=confidence*100
-        e.last_verified=datetime.now(timezone.utc)
-        e.verification_status="SUPPORTED" if identity_corroborated else "EVIDENCE_COLLECTED" if fetched else "NEEDS_VERIFICATION"
-        s.commit()
+parser=argparse.ArgumentParser(description="Research public-registry institutions without exposing private identities.")
+parser.add_argument("--universe")
+parser.add_argument("--limit",type=int,default=25)
+args=parser.parse_args()
+if args.universe=="imported_private":raise SystemExit("private-import research requires an explicitly scoped diligence-case workflow")
+if args.limit<1 or args.limit>100:raise SystemExit("--limit must be between 1 and 100")
+init_db();adapter=OfficialWebAdapter();counts=Counter()
+with SessionLocal() as db:
+    entities=select(Entity).where(Entity.universe!="imported_private",Entity.official_url.is_not(None),Entity.official_url!="")
+    if args.universe:entities=entities.where(Entity.universe==args.universe)
+    rows=db.scalars(entities.order_by(Entity.universe,Entity.canonical_name,Entity.id)).all();entity_ids={x.id for x in rows}
+    existing={(x.entity_id,x.source_url) for x in db.scalars(select(CorroborationJob).where(CorroborationJob.entity_id.in_(entity_ids))).all()} if entity_ids else set()
+    for entity in rows:
+        url=normalize_public_url(entity.official_url)
+        if not url:counts["invalid_url"]+=1;continue
+        key=(entity.id,url)
+        if key not in existing:
+            from urllib.parse import urlparse
+            db.add(CorroborationJob(entity_id=entity.id,source_url=url,source_domain=(urlparse(url).hostname or "").removeprefix("www."),status="PENDING",checkpoint_json="{}"));existing.add(key);counts["queued"]+=1
+    db.flush()
+    jobs=db.scalars(select(CorroborationJob).where(CorroborationJob.entity_id.in_(entity_ids),CorroborationJob.status=="PENDING").order_by(CorroborationJob.id).limit(args.limit)).all() if entity_ids else []
+    for job in jobs:counts[run_corroboration_job(db,job,adapter)]+=1;db.commit()
+print(json.dumps({"eligible_public_entities":len(entity_ids),"attempted":len(jobs),"outcomes":dict(sorted(counts.items()))},sort_keys=True))
