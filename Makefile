@@ -16,7 +16,7 @@ train:
 	$(PY) scripts/train_priority_model.py
 
 test:
-	$(PY) -m pytest packages/research/tests -q
+	$(PY) -m pytest packages/research/tests apps/api/tests -q
 
 public-check:
 	$(PY) scripts/public_release_check.py

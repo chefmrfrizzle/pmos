@@ -102,7 +102,9 @@ Open:
 - Web UI: http://localhost:3000
 - API health: http://localhost:8000/health
 
-Private entity routes are disabled by default and loopback-only in local development. They require `PMOS_ENABLE_PRIVATE_API=1` and a random `PMOS_DEV_API_TOKEN` of at least 24 characters. This development gate is not production authentication; browser-based private functionality requires OIDC/MFA, server-enforced roles, object-level authorization, and immutable audit logging first.
+Private entity routes are absent by default (`PMOS_AUTH_MODE=disabled`). Local development uses `PMOS_AUTH_MODE=local` plus a random `PMOS_DEV_API_TOKEN` of at least 24 characters and accepts loopback clients only.
+
+Institutional deployments use `PMOS_AUTH_MODE=oidc` with `PMOS_OIDC_ISSUER`, `PMOS_OIDC_AUDIENCE`, and a same-issuer HTTPS `PMOS_OIDC_JWKS_URL`. The API requires signed RS256 access tokens, MFA evidence, an approved PMOS role, action permissions, and universe-level object scope. Browser session/CSRF integration and an enterprise identity-provider configuration remain deployment-specific; the public Vercel demo contains no private API.
 
 ### Import your private databases
 

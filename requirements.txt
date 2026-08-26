@@ -11,3 +11,4 @@ scikit-learn==1.6.1
 joblib==1.5.1
 pytest==8.4.1
 python-dateutil==2.9.0.post0
+PyJWT[crypto]==2.13.0

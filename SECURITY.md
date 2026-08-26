@@ -6,7 +6,9 @@ Primary threats are accidental Git/deployment leakage, secrets, client-side expo
 
 ## Current private-API boundary
 
-Entity and claim routes fail closed unless `PMOS_ENABLE_PRIVATE_API=1`, accept loopback clients only, and require a strong `PMOS_DEV_API_TOKEN`. This is local development isolation—not production authentication. These routes must never be deployed publicly. Production private functionality is blocked until OIDC with MFA, deny-by-default role and object authorization, CSRF/session protections, rate limits, purpose/tenant constraints, and server-side audit identity are implemented and tested.
+Entity and claim routes are absent unless `PMOS_AUTH_MODE` explicitly selects `local` or `oidc`. Local mode is loopback-only and requires a strong `PMOS_DEV_API_TOKEN`. OIDC mode validates a fixed RS256 algorithm, same-issuer HTTPS JWKS, issuer, audience, expiry/issued-at, MFA, approved roles, action permissions, and universe-level object scope. Successful reads append actor, action, result metadata, and correlation ID to the audit ledger.
+
+The private API must never be deployed in the public Vercel project. An institutional deployment still requires enterprise IdP provisioning, browser session and CSRF controls, purpose/tenant claims, rate limits, session revocation, and operational access reviews. Backend OIDC enforcement is necessary but is not the complete production access-control program.
 
 ## Adjudication and exports
 
