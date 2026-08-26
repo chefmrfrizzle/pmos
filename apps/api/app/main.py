@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,RelationshipMentionCandidate,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -26,7 +26,7 @@ from pmos_research.change_review import ChangeReviewError,adjudicate_change,buil
 from pmos_research.export_governance import ExportGovernanceError,adjudicate_export_request,request_dossier_export
 from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship
 from pmos_research.relationship_review import build_relationship_packet
-from pmos_research.relationship_research import RelationshipResearchError,adjudicate_relationship_candidate,build_relationship_candidate_packet
+from pmos_research.relationship_research import RelationshipResearchError,adjudicate_relationship_candidate,adjudicate_relationship_mention,build_relationship_candidate_packet,build_relationship_mention_packet
 from pmos_research.private_sale import PrivateSaleError,adjudicate_gate,open_private_sale,submit_gate_evidence
 from pmos_research.private_sale_review import build_private_sale_packet
 from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate_jurisdiction,build_jurisdiction_packet
@@ -85,6 +85,12 @@ class RelationshipCandidateActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=30)
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
+
+class RelationshipMentionActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=20)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:str=Field(min_length=5,max_length=40)
+    target_entity_id:Optional[int]=Field(default=None,gt=0)
 
 class PrivateSaleCreateRequest(BaseModel):
     asset_entity_id:int=Field(gt=0)
@@ -323,6 +329,29 @@ def relationship_candidate_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Qu
             rows.append(packet)
             if len(rows)>=limit:break
         audit_access(s,principal,"RELATIONSHIP_CANDIDATES_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.get("/relationship-mentions")
+def relationship_mention_queue(status:str="ENTITY_RESOLUTION_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"relationships:review",{"RESEARCHER","REVIEWER","ADMIN"})
+    with SessionLocal() as s:
+        rows=[]
+        for mention in s.scalars(select(RelationshipMentionCandidate).where(RelationshipMentionCandidate.status==status.upper()).order_by(RelationshipMentionCandidate.id).limit(limit*10)):
+            packet=build_relationship_mention_packet(s,mention.id)
+            if "*" in principal.universes or packet["source_entity"]["universe"] in principal.universes:rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"RELATIONSHIP_MENTIONS_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/relationship-mentions/{mention_id}/actions")
+def relationship_mention_action(mention_id:int,body:RelationshipMentionActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_relationship_mention_packet(s,mention_id);authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},packet["source_entity"]["universe"])
+        if body.target_entity_id:
+            target=s.get(Entity,body.target_entity_id)
+            if not target:raise HTTPException(status_code=404,detail="target entity not found")
+            authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},target.universe)
+        try:mention=adjudicate_relationship_mention(s,mention_id,body.action,principal.subject,body.rationale,body.expected_status,body.target_entity_id)
+        except RelationshipResearchError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        result=build_relationship_mention_packet(s,mention.id);audit_access(s,principal,"RELATIONSHIP_MENTION_ACTION",{"mention_id":mention.id,"action":body.action.upper(),"resulting_state":mention.status,"resolved_entity_id":mention.resolved_entity_id,"resulting_candidate_id":mention.resulting_candidate_id});s.commit();return result
 
 @app.post("/relationship-candidates/{candidate_id}/actions")
 def relationship_candidate_action(candidate_id:int,body:RelationshipCandidateActionRequest,principal:Principal=Depends(authenticate_private_request)):

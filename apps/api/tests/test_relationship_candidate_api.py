@@ -19,3 +19,15 @@ def test_relationship_candidate_api_is_scoped_and_never_auto_verifies(monkeypatc
             rows=client.get("/relationship-candidates");assert rows.status_code==200 and len(rows.json())==1;candidate=rows.json()[0];assert candidate["status"]=="HUMAN_REVIEW_REQUIRED"
             result=client.post(f"/relationship-candidates/{candidate['id']}/actions",json={"action":"PROPOSE_ASSERTION","rationale":"Exact passage supports specialist relationship review","expected_status":"HUMAN_REVIEW_REQUIRED"});assert result.status_code==200 and result.json()["status"]=="ASSERTION_PROPOSED" and result.json()["resulting_assertion_id"]
     finally:main.app.dependency_overrides.clear()
+
+def test_relationship_mention_api_requires_registered_scoped_target(monkeypatch):
+    import apps.api.app.main as main
+    engine=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool);Base.metadata.create_all(engine);factory=sessionmaker(bind=engine,expire_on_commit=False)
+    with factory() as db:
+        source=Entity(name="Alpha Capital",canonical_name="alpha capital",universe="venture_capital");db.add(source);db.flush();text="Alpha Capital partnered with Gamma Partners.";digest=hashlib.sha256(text.encode()).hexdigest();document=SourceDocument(entity_id=source.id,publisher="alpha.example",publisher_independence_group="alpha.example",source_rank="S1",source_type="official_website",source_url="https://alpha.example/news",content_hash=digest);db.add(document);db.flush();db.add(EvidencePassage(document_id=document.id,passage=text,passage_hash=digest));db.flush();discover_relationship_candidates(db);target=Entity(name="Gamma Partners",canonical_name="gamma partners",universe="private_equity");db.add(target);db.commit();target_id=target.id
+    monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None);principal=Principal("resolver",frozenset({"RESEARCHER"}),frozenset({"relationships:review","relationships:write"}),frozenset({"venture_capital","private_equity"}),"oidc","correlation","tenant-a",frozenset({"relationship review"}),"relationship review");main.app.dependency_overrides[authenticate_private_request]=lambda:principal
+    try:
+        with TestClient(main.app) as client:
+            rows=client.get("/relationship-mentions");assert rows.status_code==200 and len(rows.json())==1;mention=rows.json()[0];assert mention["mention_text"]=="Gamma Partners"
+            linked=client.post(f"/relationship-mentions/{mention['id']}/actions",json={"action":"LINK_TARGET","rationale":"Official identity review links the exact named mention","expected_status":"ENTITY_RESOLUTION_REQUIRED","target_entity_id":target_id});assert linked.status_code==200 and linked.json()["status"]=="TARGET_LINKED" and linked.json()["resulting_candidate_id"]
+    finally:main.app.dependency_overrides.clear()

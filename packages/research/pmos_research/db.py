@@ -786,6 +786,33 @@ class RelationshipResearchCandidateEvent(Base):
     rationale: Mapped[str] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class RelationshipMentionCandidate(Base):
+    __tablename__ = "relationship_mention_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    suggested_relation_type: Mapped[str] = mapped_column(String(80), index=True)
+    evidence_passage_id: Mapped[int] = mapped_column(ForeignKey("evidence_passages.id"), index=True)
+    matched_phrase: Mapped[str] = mapped_column(String(100))
+    mention_text: Mapped[str] = mapped_column(String(300))
+    mention_hash: Mapped[str] = mapped_column(String(64), index=True)
+    rule_version: Mapped[str] = mapped_column(String(50))
+    status: Mapped[str] = mapped_column(String(40), default="ENTITY_RESOLUTION_REQUIRED", index=True)
+    resolved_entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), nullable=True)
+    resulting_candidate_id: Mapped[Optional[int]] = mapped_column(ForeignKey("relationship_research_candidates.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("from_entity_id","suggested_relation_type","evidence_passage_id","mention_hash",name="uq_relationship_mention_candidate"),)
+
+class RelationshipMentionCandidateEvent(Base):
+    __tablename__ = "relationship_mention_candidate_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    mention_candidate_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_candidates.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class RelationshipAssertionEvidence(Base):
     __tablename__ = "relationship_assertion_evidence"
     id: Mapped[int] = mapped_column(primary_key=True)
