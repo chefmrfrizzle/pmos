@@ -2,6 +2,8 @@
 
 Bootstrap with `make bootstrap`, seed with `make seed`, and run locally with `make dev`. Research jobs are scoped by universe and can be restarted from checkpoints. Back up the private root to encrypted local storage. For a suspected leak: stop deployment, revoke credentials, preserve evidence, remove public access, audit Git history, rotate affected secrets, and do not resume until the safety checker and manual review pass.
 
+Run allowlisted batch jobs with resource and environment isolation where possible, for example `./.venv/bin/python scripts/run_isolated_job.py corroboration --limit 10`. The launcher does not provide a network firewall; production workers still require a low-privilege service account/container and an operating-system egress allowlist. Set `PMOS_ALLOWED_HOSTS` to the exact private API hostnames and enforce distributed rate limits at the institutional gateway.
+
 For a private import, set `PMOS_PRIVATE_ROOT` and `PMOS_DB_URL` to paths outside the repository, then run `python scripts/import_private.py --input-dir /external/private/imports`. Use a new database URL for schema revisions instead of overwriting an earlier datastore. The importer is idempotent by file hash, isolates source-file failures, and prints aggregate reconciliation only. Review every non-exact resolution before promotion.
 
 Import limits can only be adjusted within hard safety ceilings through `PMOS_IMPORT_MAX_FILE_BYTES`, `PMOS_IMPORT_MAX_ROWS`, `PMOS_IMPORT_MAX_COLUMNS`, `PMOS_IMPORT_MAX_CELL_CHARS`, `PMOS_IMPORT_MAX_TOTAL_CELLS`, and `PMOS_IMPORT_MAX_XLSX_UNCOMPRESSED`. Do not raise limits merely to force a malformed source through; quarantine and inspect it first.

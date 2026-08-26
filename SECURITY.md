@@ -6,7 +6,7 @@ Primary threats are accidental Git/deployment leakage, secrets, client-side expo
 
 ## Current private-API boundary
 
-Entity and claim routes are absent unless `PMOS_AUTH_MODE` explicitly selects `local` or `oidc`. Local mode is loopback-only and requires a strong `PMOS_DEV_API_TOKEN`. OIDC mode validates a fixed RS256 algorithm, same-issuer HTTPS JWKS, issuer, audience, expiry/issued-at, MFA, approved roles, action permissions, and universe-level object scope. Successful reads append actor, action, result metadata, and correlation ID to the audit ledger.
+Entity and claim routes are absent unless `PMOS_AUTH_MODE` explicitly selects `local` or `oidc`. Local mode is loopback-only and requires a strong `PMOS_DEV_API_TOKEN`. OIDC mode validates a fixed RS256 algorithm, same-issuer HTTPS JWKS, issuer, audience, expiry/issued-at, MFA, approved roles, action permissions, and universe-level object scope. Successful reads append actor, action, result metadata, and correlation ID to the audit ledger. The API also enforces trusted hosts, a bounded request body, per-process principal/IP rate limits, no-store responses, and defensive browser headers. Institutional deployments must set `PMOS_ALLOWED_HOSTS` explicitly and add gateway-level distributed rate limits.
 
 The private API must never be deployed in the public Vercel project. An institutional deployment still requires enterprise IdP provisioning, browser session and CSRF controls, purpose/tenant claims, rate limits, session revocation, and operational access reviews. Backend OIDC enforcement is necessary but is not the complete production access-control program.
 
@@ -24,7 +24,7 @@ Exports resolve beneath `PMOS_PRIVATE_ROOT`, reject repository and symlink escap
 
 - scan staged blobs, Git history, browser bundles, source maps, deployment manifests, screenshots, dependencies, and SBOM before release
 - pin/revalidate crawler peer IPs and enforce an operating-system egress policy to mitigate DNS rebinding
-- add operating-system process timeouts/batch quotas and encrypted private storage around the bounded importer
+- enforce an operating-system egress firewall and run research workers under a dedicated low-privilege account/container
 - complete external threat modeling, penetration testing, privacy retention/deletion, and incident-response exercises before institutional deployment
 
 The crawler accepts only default HTTP/HTTPS ports, ignores process proxy variables, revalidates every redirect, applies separate connection/read/pool timeouts, and caps declared, downloaded, and decompressed response bytes while streaming. DNS-to-connected-peer pinning and an operating-system egress firewall remain required defense-in-depth for production research workers.
@@ -32,3 +32,5 @@ The crawler accepts only default HTTP/HTTPS ports, ignores process proxy variabl
 Private imports reject symlinks, unsupported extensions, empty/oversized files, excessive rows/columns/cells, oversized cell values, malformed XLSX archives, excessive archive members, encrypted members, dangerous expansion ratios, and excessive uncompressed workbook size. Limits are bounded even when environment-configured. New provenance uses logical source IDs instead of machine-specific absolute paths, and local SQLite files are set to owner-read/write permissions. Per-process timeouts, encrypted-volume enforcement, and external quarantine orchestration remain deployment controls.
 
 Private backups use SQLite’s consistent backup API rather than copying a live database file. Source and backup integrity plus audit chains are verified, artifacts/manifests are owner-only, manifests contain classification/size/hash/ledger metadata, and backup creation is logged after success. macOS production runs require FileVault; other platforms require an explicit encrypted-storage attestation. Restore verification never overwrites an existing database or accepts a repository path, symlink, hash mismatch, corrupt SQLite file, or broken ledger.
+
+Allowlisted research jobs may be launched through `scripts/run_isolated_job.py`. The launcher builds a narrow environment, removes proxy and credential variables, rejects shell control arguments, and applies CPU, file-size, file-descriptor, process, and core-dump limits. These process controls are defense-in-depth, not a substitute for a dedicated worker identity, sandbox/container, DNS/peer pinning, or an operating-system egress firewall.

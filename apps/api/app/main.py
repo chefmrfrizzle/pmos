@@ -1,10 +1,11 @@
 from __future__ import annotations
 from pathlib import Path
-import sys, uuid
+import os, sys, uuid
 from typing import Optional
 from contextlib import asynccontextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"packages/research"))
 from fastapi import FastAPI, Query, Depends, HTTPException, Request
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
@@ -26,12 +27,48 @@ class CheckActionRequest(BaseModel):
 async def lifespan(app):
     init_db();yield
 
-app=FastAPI(title="PMOS Private API",version="0.2.0",lifespan=lifespan)
+class BodySizeLimitMiddleware:
+    def __init__(self,app,max_bytes:int=1_048_576):self.app=app;self.max_bytes=max_bytes
+    async def __call__(self,scope,receive,send):
+        if scope["type"]!="http":return await self.app(scope,receive,send)
+        headers=dict(scope.get("headers",[]));declared=headers.get(b"content-length")
+        if declared:
+            try:too_large=int(declared)>self.max_bytes
+            except ValueError:too_large=True
+            if too_large:return await self._reject(send)
+        consumed=0
+        async def limited_receive():
+            nonlocal consumed
+            message=await receive()
+            if message["type"]=="http.request":
+                consumed+=len(message.get("body",b""))
+                if consumed>self.max_bytes:raise _BodyTooLarge
+            return message
+        try:return await self.app(scope,limited_receive,send)
+        except _BodyTooLarge:return await self._reject(send)
+    async def _reject(self,send):
+        body=b'{"detail":"request body too large"}'
+        await send({"type":"http.response.start","status":413,"headers":[(b"content-type",b"application/json"),(b"content-length",str(len(body)).encode())]})
+        await send({"type":"http.response.body","body":body})
+
+class _BodyTooLarge(Exception):pass
+
+def _request_limit()->int:
+    try:value=int(os.getenv("PMOS_MAX_REQUEST_BYTES","1048576"))
+    except ValueError:value=1_048_576
+    return max(16_384,min(value,4_194_304))
+
+app=FastAPI(title="PMOS Private API",version="0.3.0",lifespan=lifespan)
+allowed_hosts=[x.strip() for x in os.getenv("PMOS_ALLOWED_HOSTS","localhost,127.0.0.1,[::1],testserver").split(",") if x.strip()]
+app.add_middleware(TrustedHostMiddleware,allowed_hosts=allowed_hosts)
+app.add_middleware(BodySizeLimitMiddleware,max_bytes=_request_limit())
 
 @app.middleware("http")
 async def correlation_id(request:Request,call_next):
     request.state.correlation_id=request.headers.get("x-request-id") or str(uuid.uuid4())
-    response=await call_next(request);response.headers["X-Request-ID"]=request.state.correlation_id;return response
+    response=await call_next(request)
+    response.headers.update({"X-Request-ID":request.state.correlation_id,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","X-Frame-Options":"DENY","Referrer-Policy":"no-referrer","Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=()","Content-Security-Policy":"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"})
+    return response
 
 def audit_access(session,principal:Principal,action:str,payload:dict):
     append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,payload,principal.correlation_id)

@@ -3,6 +3,8 @@ from __future__ import annotations
 import ipaddress
 import os
 import secrets
+import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
@@ -10,6 +12,27 @@ from urllib.parse import urlparse
 from fastapi import Header, HTTPException, Request
 
 ALLOWED_ROLES={"RESEARCHER","REVIEWER","COUNSEL","ADMIN","EXPORTER"}
+
+class FixedWindowRateLimiter:
+    """Small per-process guardrail; production must also rate-limit at the gateway."""
+    def __init__(self):
+        self._windows:dict[str,tuple[int,int]]={};self._lock=threading.Lock()
+
+    def check(self,key:str)->None:
+        try:configured=int(os.getenv("PMOS_RATE_LIMIT_PER_MINUTE","120"))
+        except ValueError:configured=120
+        limit=max(10,min(configured,1000));window=int(time.monotonic()//60)
+        with self._lock:
+            if len(self._windows)>10_000:self._windows={k:v for k,v in self._windows.items() if v[0]>=window-1}
+            current,count=self._windows.get(key,(window,0))
+            if current!=window:current,count=window,0
+            if count>=limit:raise HTTPException(status_code=429,detail="request rate limit exceeded",headers={"Retry-After":"60"})
+            self._windows[key]=(current,count+1)
+
+    def reset(self)->None:
+        with self._lock:self._windows.clear()
+
+rate_limiter=FixedWindowRateLimiter()
 
 @dataclass(frozen=True)
 class Principal:
@@ -60,9 +83,12 @@ def _oidc_principal(request:Request,authorization:str|None)->Principal:
 def authenticate_private_request(request:Request,authorization:Optional[str]=Header(default=None),x_pmos_token:Optional[str]=Header(default=None))->Principal:
     mode=os.getenv("PMOS_AUTH_MODE","disabled").casefold()
     if mode=="disabled":raise HTTPException(status_code=404,detail="private API disabled")
-    if mode=="local":return _local_principal(request,x_pmos_token)
-    if mode=="oidc":return _oidc_principal(request,authorization)
-    raise HTTPException(status_code=503,detail="unsupported authentication mode")
+    if mode=="local":principal=_local_principal(request,x_pmos_token)
+    elif mode=="oidc":principal=_oidc_principal(request,authorization)
+    else:raise HTTPException(status_code=503,detail="unsupported authentication mode")
+    peer=request.client.host if request.client else "unknown"
+    rate_limiter.check(f"{principal.auth_mode}:{principal.subject}:{peer}")
+    return principal
 
 def authorize(principal:Principal,permission:str,roles:set[str],universe:str|None=None)->None:
     if not principal.roles.intersection(roles):raise HTTPException(status_code=403,detail="role is not authorized")

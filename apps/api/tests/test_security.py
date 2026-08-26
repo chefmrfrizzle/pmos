@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from apps.api.app.security import Principal,authenticate_private_request,authorize
+from apps.api.app.security import Principal,authenticate_private_request,authorize,rate_limiter
 from pmos_research.db import Base,Claim,ClaimEvidence,Entity,EvidencePassage,SourceDocument
 from pmos_research.diligence import open_case
 
@@ -24,6 +24,7 @@ def test_private_api_is_absent_by_default(monkeypatch):
     assert error.value.status_code==404
 
 def test_local_auth_is_loopback_only_and_requires_strong_token(monkeypatch):
+    rate_limiter.reset()
     monkeypatch.setenv("PMOS_AUTH_MODE","local");monkeypatch.setenv("PMOS_DEV_API_TOKEN","a-secure-local-token-value")
     with pytest.raises(HTTPException) as error:authenticate_private_request(request("203.0.113.8"),None,"a-secure-local-token-value")
     assert error.value.status_code==403
@@ -31,6 +32,22 @@ def test_local_auth_is_loopback_only_and_requires_strong_token(monkeypatch):
     assert error.value.status_code==401
     principal=authenticate_private_request(request(),None,"a-secure-local-token-value")
     assert principal.roles==frozenset({"ADMIN"}) and principal.permissions==frozenset({"*"})
+
+def test_authenticated_requests_are_rate_limited(monkeypatch):
+    rate_limiter.reset();monkeypatch.setenv("PMOS_AUTH_MODE","local");monkeypatch.setenv("PMOS_DEV_API_TOKEN","a-secure-local-token-value");monkeypatch.setenv("PMOS_RATE_LIMIT_PER_MINUTE","10")
+    for _ in range(10):authenticate_private_request(request(),None,"a-secure-local-token-value")
+    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),None,"a-secure-local-token-value")
+    assert error.value.status_code==429 and error.value.headers["Retry-After"]=="60"
+    rate_limiter.reset()
+
+def test_api_rejects_untrusted_hosts_large_bodies_and_sets_security_headers(monkeypatch):
+    import apps.api.app.main as main
+    monkeypatch.setattr(main,"init_db",lambda:None)
+    with TestClient(main.app) as client:
+        response=client.get("/health");assert response.status_code==200
+        assert response.headers["x-content-type-options"]=="nosniff" and response.headers["cache-control"]=="no-store"
+        assert client.get("/health",headers={"host":"attacker.example"}).status_code==400
+        assert client.post("/missing",content=b"x"*1_048_577).status_code==413
 
 def _oidc_token(monkeypatch,overrides=None):
     private=rsa.generate_private_key(public_exponent=65537,key_size=2048);public=private.public_key()
