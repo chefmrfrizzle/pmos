@@ -1,3 +1,5 @@
 # Deployment
 
 Run `make public-check`, tests, and the web production build before deployment. Vercel receives only `apps/web` and synthetic public assets. Never configure `PMOS_DB_URL`, `PMOS_PRIVATE_ROOT`, private API origins, or private credentials in a public project. Verify desktop/mobile rendering, core interactions, network requests, and console errors after release.
+
+Private services are a separate deployment boundary. They require encrypted storage, OIDC/MFA, deny-by-default authorization, immutable ledger permissions, verified backup/recovery, rate limits, process/egress isolation, retention controls, and an external security review. A successful public Vercel deployment is not evidence that the private operating system is production-approved.

@@ -10,6 +10,7 @@ from pmos_research.relationship_controls import propose_relationship,verify_rela
 from pmos_research.registry_research import assess_lei_candidate,persist_lei_candidate
 from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
+from pmos_research.backup import BackupSafetyError,create_private_backup,restore_private_backup,sha256_file,verify_backup_manifest,verify_sqlite_database
 from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooLarge, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
 import pytest
@@ -405,3 +406,33 @@ def test_exceptions_never_produce_green_and_critical_exception_is_red():
         adjudicate_check(db,identity.id,"PROPOSE_EXCEPTION","maker","legal identity unavailable; no transaction use","EVIDENCE_COLLECTED")
         adjudicate_check(db,identity.id,"APPROVE_EXCEPTION","checker","critical exception accepted only to document blocker","EXCEPTION_PROPOSED")
         assert readiness(db,case.id)["state"]=="RED"
+
+def test_private_backup_is_consistent_hashed_and_owner_only(tmp_path):
+    source=tmp_path/"private.db";engine=create_engine(f"sqlite:///{source}");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        append_ledger_event(db,"TEST","1","actor","SYSTEM","CREATED",{"state":"valid"});db.commit()
+    repo=tmp_path/"public-repo";repo.mkdir();backup_root=tmp_path/"private-backups"
+    result=create_private_backup(f"sqlite:///{source}",repo,backup_root,require_encrypted_storage=False)
+    assert result["target"].stat().st_mode&0o777==0o600
+    assert result["manifest"].stat().st_mode&0o777==0o600
+    assert result["metadata"]["sha256"]==sha256_file(result["target"])
+    check=verify_sqlite_database(result["target"]);assert check["integrity"]=="ok" and check["ledger"]["valid"]
+    verified=verify_backup_manifest(result["manifest"],repo);assert verified["metadata"]["sha256"]==result["metadata"]["sha256"]
+    restored=restore_private_backup(result["manifest"],tmp_path/"restore"/"restored.db",repo,require_encrypted_storage=False)
+    assert restored["sha256"]==result["metadata"]["sha256"] and restored["target"].stat().st_mode&0o777==0o600
+
+def test_backup_rejects_public_repo_targets_and_invalid_ledger(tmp_path):
+    repo=tmp_path/"repo";repo.mkdir();source=tmp_path/"private.db";engine=create_engine(f"sqlite:///{source}");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entry=append_ledger_event(db,"TEST","1","actor","SYSTEM","CREATED",{"state":"valid"});db.commit()
+    with pytest.raises(BackupSafetyError):create_private_backup(f"sqlite:///{source}",repo,repo/"backups",require_encrypted_storage=False)
+    with factory() as db:
+        entry=db.scalar(select(AuditLedgerEntry));entry.payload_json='{"state":"forged"}';db.commit()
+    with pytest.raises(BackupSafetyError):create_private_backup(f"sqlite:///{source}",repo,tmp_path/"backups",require_encrypted_storage=False)
+
+def test_backup_manifest_rejects_hash_mismatch(tmp_path):
+    source=tmp_path/"private.db";engine=create_engine(f"sqlite:///{source}");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:append_ledger_event(db,"TEST","1","actor","SYSTEM","CREATED",{"state":"valid"});db.commit()
+    repo=tmp_path/"repo";repo.mkdir();result=create_private_backup(f"sqlite:///{source}",repo,tmp_path/"backups",require_encrypted_storage=False)
+    with result["target"].open("ab") as handle:handle.write(b"tamper")
+    with pytest.raises(BackupSafetyError):verify_backup_manifest(result["manifest"],repo)

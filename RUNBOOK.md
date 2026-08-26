@@ -84,3 +84,26 @@ The command emits aggregate counts only. Candidate order is not precedence. `PRO
 Use authenticated private API routes to inspect `/diligence-cases/{case_id}`, attach claim IDs to a check, propose completion or an exception, and obtain independent approval. Evidence must belong to the case entity and contain exact-passage links. A 409 response means the state, source sufficiency, entity scope, or conflict policy failed; reload and investigate instead of retrying blindly.
 
 `PROPOSE_COMPLETE` and `APPROVE` require source sufficiency. `PROPOSE_EXCEPTION` and `APPROVE_EXCEPTION` preserve the restriction and never create GREEN readiness. Researchers cannot approve their own work. Verify the audit ledger after every adjudication batch.
+
+## Backup and recovery
+
+Create a consistent private SQLite backup only on verified encrypted storage:
+
+```bash
+PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
+PMOS_PRIVATE_ROOT='/absolute/private/root' \
+  ./.venv/bin/python scripts/backup_private.py --backup-root /absolute/private/backups
+```
+
+The job verifies the source ledger and SQLite integrity, uses SQLite’s online backup operation, sets `0700/0600` permissions, verifies the copied ledger/integrity, hashes the artifact, creates a classified manifest, and appends a backup event to the source ledger. `--allow-unverified-storage` is development-only and must not be used for institutional data.
+
+Verify and restore without overwriting the operating database:
+
+```bash
+./.venv/bin/python scripts/verify_private_backup.py --manifest /private/backups/example.manifest.json
+./.venv/bin/python scripts/restore_private_backup.py \
+  --manifest /private/backups/example.manifest.json \
+  --target /private/restore-verification/restored.db
+```
+
+Restore targets must be new paths outside the repository. After verification, change `PMOS_DB_URL` only through an approved recovery procedure; never restore over a live database.
