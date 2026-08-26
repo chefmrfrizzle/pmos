@@ -10,15 +10,16 @@ from .case_checks import evidence_sufficiency
 from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
-    EvidencePassage,EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionAuthorization,EvidenceReviewDecisionBinding,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
+    EvidencePassage,EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionAuthorization,EvidenceReviewDecisionBinding,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,IdentityReviewBatch,IdentityReviewBatchItem,IdentityReviewDecisionBinding,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,UniverseCoverageRun,
+    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
 from .evidence_review_batch import build_batch_packet
+from .identity_review_batch import build_identity_batch_packet
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -41,6 +42,7 @@ def run_control_assurance(session)->dict:
     passages=session.scalars(select(EvidencePassage)).all();controls.append(_control("evidence_passage_hash_integrity",len(passages),sum(hashlib.sha256(x.passage.encode()).hexdigest()!=x.passage_hash for x in passages)))
     snapshots=session.scalars(select(ResearchDocumentSnapshot)).all();controls.append(_control("research_snapshot_hash_integrity",len(snapshots),sum(hashlib.sha256(x.normalized_text.encode()).hexdigest()!=x.text_hash for x in snapshots)))
     batches=session.scalars(select(EvidenceReviewBatch)).all();controls.append(_control("frozen_evidence_review_batch_manifest_integrity",len(batches),sum(not build_batch_packet(session,x.id)["manifest_valid"] for x in batches)))
+    identity_batches=session.scalars(select(IdentityReviewBatch)).all();controls.append(_control("frozen_identity_review_batch_manifest_integrity",len(identity_batches),sum(not build_identity_batch_packet(session,x.id)["manifest_valid"] for x in identity_batches)))
     assignments=session.scalars(select(EvidenceReviewAssignment)).all();bad=0;now=datetime.now(timezone.utc)
     for assignment in assignments:
         events=session.scalars(select(EvidenceReviewAssignmentEvent).where(EvidenceReviewAssignmentEvent.assignment_id==assignment.id).order_by(EvidenceReviewAssignmentEvent.id)).all();expires=assignment.expires_at if assignment.expires_at.tzinfo else assignment.expires_at.replace(tzinfo=timezone.utc);created=assignment.created_at if assignment.created_at.tzinfo else assignment.created_at.replace(tzinfo=timezone.utc)
@@ -69,6 +71,12 @@ def run_control_assurance(session)->dict:
         members=session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)).all()
         bad+=len(members)!=2 or any(x.status!="ACCEPTED" or not x.decided_by for x in members) or any(x.decided_by==cluster.created_by for x in members)
     controls.append(_control("accepted_identity_cluster_maker_checker",len(accepted),bad))
+
+    accepted_items=session.scalars(select(ReviewQueueItem).where(ReviewQueueItem.status=="ACCEPTED")).all();bad=0
+    for item in accepted_items:
+        events=session.scalars(select(AdjudicationEvent).where(AdjudicationEvent.queue_item_id==item.id).order_by(AdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE_MATCH"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE_MATCH"),None);proposal_binding=session.scalar(select(IdentityReviewDecisionBinding).where(IdentityReviewDecisionBinding.adjudication_event_id==proposal.id)) if proposal else None;approval_binding=session.scalar(select(IdentityReviewDecisionBinding).where(IdentityReviewDecisionBinding.adjudication_event_id==approval.id)) if approval else None;batch_item=session.get(IdentityReviewBatchItem,proposal_binding.batch_item_id) if proposal_binding else None
+        bad+=not proposal or not approval or proposal.reviewer==approval.reviewer or not proposal_binding or not approval_binding or proposal_binding.batch_item_id!=approval_binding.batch_item_id or not batch_item or batch_item.queue_item_id!=item.id
+    controls.append(_control("accepted_identity_decision_frozen_batch_binding",len(accepted_items),bad))
 
     active=session.scalars(select(IdentityCluster).where(IdentityCluster.status.in_(("PROPOSED","ACCEPTED")))).all();membership_counts={};bad=0;population=0
     for cluster in active:

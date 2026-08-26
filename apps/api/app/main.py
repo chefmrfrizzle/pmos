@@ -16,6 +16,7 @@ from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
 from pmos_research.adjudication import AdjudicationInputError,StaleReviewError,adjudicate
 from pmos_research.identity_review import build_review_packet
+from pmos_research.identity_review_batch import IdentityReviewBatchError,build_identity_batch_packet,freeze_identity_batch
 from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
 from pmos_research.passage_review import build_passage_packet
 from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
@@ -44,6 +45,15 @@ class IdentityActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     evidence_ids:list[int]=Field(default_factory=list,max_length=25)
     expected_version:str=Field(min_length=10,max_length=80)
+    review_batch_id:int=Field(gt=0)
+
+class IdentityBatchRequest(BaseModel):
+    universe:str=Field(min_length=1,max_length=100)
+    status:str=Field(default="PENDING",min_length=5,max_length=30)
+    queue_type:Optional[str]=Field(default=None,max_length=50)
+    resolution_state:Optional[str]=Field(default=None,max_length=40)
+    min_priority:int=Field(default=0,ge=0,le=100)
+    limit:int=Field(default=100,ge=1,le=100)
 
 class JurisdictionActionRequest(BaseModel):
     action:str=Field(min_length=6,max_length=30)
@@ -196,16 +206,31 @@ def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,res
             if len(rows)>=limit:break
         audit_access(s,principal,"IDENTITY_REVIEW_LISTED",{"status":status.upper(),"queue_type":queue_type,"resolution_state":normalized_state,"min_priority":min_priority,"limit":limit,"result_count":len(rows),"include_excerpt":include_excerpt});s.commit();return rows
 
+@app.post("/identity-review/batches")
+def identity_review_batch_create(body:IdentityBatchRequest,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"identity:review",{"REVIEWER","ADMIN"},body.universe)
+    with SessionLocal() as s:
+        try:batch=freeze_identity_batch(s,principal.subject,body.universe,body.status,body.queue_type,body.resolution_state,body.min_priority,body.limit)
+        except IdentityReviewBatchError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_identity_batch_packet(s,batch.id);audit_access(s,principal,"IDENTITY_REVIEW_BATCH_FROZEN",{"batch_id":batch.id,"universe":body.universe,"manifest_hash":batch.manifest_hash,"item_count":batch.item_count});s.commit();return packet
+
+@app.get("/identity-review/batches/{batch_id}")
+def identity_review_batch_detail(batch_id:int,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        try:packet=build_identity_batch_packet(s,batch_id)
+        except IdentityReviewBatchError as exc:raise HTTPException(status_code=404,detail=str(exc))
+        authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"},packet["criteria"]["universe"]);audit_access(s,principal,"IDENTITY_REVIEW_BATCH_READ",{"batch_id":batch_id,"manifest_hash":packet["manifest_hash"],"manifest_valid":packet["manifest_valid"]});s.commit();return packet
+
 @app.post("/identity-review/{item_id}/actions")
 def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Principal=Depends(authenticate_private_request)):
     approval=body.action.upper()=="APPROVE_MATCH";permission="identity:approve" if approval else "identity:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
     with SessionLocal() as s:
         packet=build_review_packet(s,item_id)
         authorize(principal,permission,roles,packet["universe"])
-        try:result=adjudicate(s,item_id,body.action,principal.subject,body.rationale,body.evidence_ids,body.expected_version)
+        try:result=adjudicate(s,item_id,body.action,principal.subject,body.rationale,body.evidence_ids,body.expected_version,body.review_batch_id)
         except StaleReviewError as exc:raise HTTPException(status_code=409,detail=str(exc))
         except AdjudicationInputError as exc:raise HTTPException(status_code=422,detail=str(exc))
-        audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
+        audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"review_batch_id":body.review_batch_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
 
 @app.get("/jurisdiction-review")
 def jurisdiction_review_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):

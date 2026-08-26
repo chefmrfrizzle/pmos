@@ -167,6 +167,35 @@ class AdjudicationEvent(Base):
     evidence_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class IdentityReviewBatch(Base):
+    __tablename__ = "identity_review_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), default="FROZEN", index=True)
+    criteria_json: Mapped[str] = mapped_column(Text)
+    manifest_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    item_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class IdentityReviewBatchItem(Base):
+    __tablename__ = "identity_review_batch_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("identity_review_batches.id"), index=True)
+    queue_item_id: Mapped[int] = mapped_column(ForeignKey("review_queue_items.id"), index=True)
+    item_version: Mapped[str] = mapped_column(String(80))
+    queue_type: Mapped[str] = mapped_column(String(50))
+    priority: Mapped[int] = mapped_column(Integer)
+    resolution_state: Mapped[str] = mapped_column(String(40))
+    pair_fingerprint: Mapped[str] = mapped_column(String(64))
+    __table_args__ = (UniqueConstraint("batch_id", "queue_item_id", name="uq_identity_batch_queue_item"),)
+
+class IdentityReviewDecisionBinding(Base):
+    __tablename__ = "identity_review_decision_bindings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("identity_review_batch_items.id"), index=True)
+    adjudication_event_id: Mapped[int] = mapped_column(ForeignKey("adjudication_events.id"), unique=True, index=True)
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class CorroborationJob(Base):
     __tablename__ = "corroboration_jobs"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -243,12 +243,13 @@ def _review_fixture(db):
 def test_adjudication_is_two_stage_and_preserves_source_entities():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        item,evidence=_review_fixture(db);version=item.updated_at.replace(tzinfo=timezone.utc).isoformat() if item.updated_at.tzinfo is None else item.updated_at.isoformat()
-        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",expected_version=version)
-        result=adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",evidence_ids=[evidence.id],expected_version=version)
+        from pmos_research.identity_review_batch import freeze_identity_batch
+        item,evidence=_review_fixture(db);version=item.updated_at.replace(tzinfo=timezone.utc).isoformat() if item.updated_at.tzinfo is None else item.updated_at.isoformat();batch=freeze_identity_batch(db,"assigner","test")
+        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",expected_version=version,review_batch_id=batch.id)
+        result=adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",evidence_ids=[evidence.id],expected_version=version,review_batch_id=batch.id)
         assert result["resulting_state"]=="PROPOSED"
-        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"APPROVE_MATCH","maker","self approval",evidence_ids=[evidence.id])
-        adjudicate(db,item.id,"APPROVE_MATCH","checker","independent review completed",evidence_ids=[evidence.id],expected_version=result["version"])
+        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"APPROVE_MATCH","maker","self approval",evidence_ids=[evidence.id],review_batch_id=batch.id)
+        adjudicate(db,item.id,"APPROVE_MATCH","checker","independent review completed",evidence_ids=[evidence.id],expected_version=result["version"],review_batch_id=batch.id)
         assert item.status=="ACCEPTED"
         assert db.scalar(select(func.count()).select_from(Entity))==2
         assert db.scalar(select(func.count()).select_from(IdentityCluster).where(IdentityCluster.status=="ACCEPTED"))==1
@@ -265,25 +266,28 @@ def test_adjudication_rejects_stale_review_version():
 def test_identity_proposal_rejects_overlapping_active_cluster():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        item,evidence=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id)
+        from pmos_research.identity_review_batch import freeze_identity_batch
+        item,evidence=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id);batch=freeze_identity_batch(db,"assigner","test")
         unrelated=Entity(name="Other Capital",canonical_name="other capital",universe="test");db.add(unrelated);db.flush()
         cluster=IdentityCluster(identity_type="ENTITY",canonical_label="Other Capital",status="ACCEPTED",created_by="prior-maker");db.add(cluster);db.flush()
         db.add_all([IdentityMembership(cluster_id=cluster.id,entity_id=decision.candidate_entity_id,status="ACCEPTED",match_basis_json="[]",confidence=1,decided_by="prior-checker"),IdentityMembership(cluster_id=cluster.id,entity_id=unrelated.id,status="ACCEPTED",match_basis_json="[]",confidence=1,decided_by="prior-checker")]);db.flush()
         with pytest.raises(AdjudicationInputError,match="already belongs"):
-            adjudicate(db,item.id,"PROPOSE_MATCH","maker","Candidate appears to match but has an existing cluster",evidence_ids=[evidence.id])
+            adjudicate(db,item.id,"PROPOSE_MATCH","maker","Candidate appears to match but has an existing cluster",evidence_ids=[evidence.id],review_batch_id=batch.id)
         assert item.status=="PENDING"
 
 def test_identity_approval_requires_the_exact_reviewed_pair_cluster():
     import hashlib
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
+        from pmos_research.identity_review_batch import freeze_identity_batch
+        from pmos_research.db import IdentityReviewBatchItem,IdentityReviewDecisionBinding
         item,evidence=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id)
         unrelated=Entity(name="Other Capital",canonical_name="other capital",universe="test");db.add(unrelated);db.flush()
         cluster=IdentityCluster(identity_type="ENTITY",canonical_label="Wrong Pair",status="PROPOSED",created_by="maker");db.add(cluster);db.flush()
         db.add_all([IdentityMembership(cluster_id=cluster.id,entity_id=decision.candidate_entity_id,status="PROPOSED",match_basis_json="[]",confidence=1),IdentityMembership(cluster_id=cluster.id,entity_id=unrelated.id,status="PROPOSED",match_basis_json="[]",confidence=.8)])
-        item.status="PROPOSED";digest=hashlib.sha256(evidence.content_hash.encode()).hexdigest();db.add(AdjudicationEvent(queue_item_id=item.id,action="PROPOSE_MATCH",prior_state="PENDING",resulting_state="PROPOSED",reviewer="maker",rationale="legacy proposal",evidence_hash=digest));db.flush()
+        item.status="PROPOSED";digest=hashlib.sha256(evidence.content_hash.encode()).hexdigest();event=AdjudicationEvent(queue_item_id=item.id,action="PROPOSE_MATCH",prior_state="PENDING",resulting_state="PROPOSED",reviewer="maker",rationale="legacy proposal",evidence_hash=digest);db.add(event);db.flush();batch=freeze_identity_batch(db,"assigner","test",status="PROPOSED");batch_item=db.scalar(select(IdentityReviewBatchItem).where(IdentityReviewBatchItem.batch_id==batch.id,IdentityReviewBatchItem.queue_item_id==item.id));db.add(IdentityReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id));db.flush()
         with pytest.raises(AdjudicationInputError,match="no proposed identity cluster"):
-            adjudicate(db,item.id,"APPROVE_MATCH","checker","Independent review must not approve a cluster sharing only one member",evidence_ids=[evidence.id])
+            adjudicate(db,item.id,"APPROVE_MATCH","checker","Independent review must not approve a cluster sharing only one member",evidence_ids=[evidence.id],review_batch_id=batch.id)
         assert cluster.status=="PROPOSED" and item.status=="PROPOSED"
 
 def test_shadow_audit_only_retains_exact_matches_meeting_strict_identity_controls():

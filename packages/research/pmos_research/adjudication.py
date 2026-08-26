@@ -9,7 +9,7 @@ from sqlalchemy import select
 from .db import (
     AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, Evidence,
     DiligenceCase, IdentityCluster, IdentityMembership, RawImportRow,
-    ResolutionDecision, ReviewQueueItem,
+    ResolutionDecision, ReviewQueueItem,IdentityReviewDecisionBinding,
 )
 from .fact_extraction import identity_supported
 from .evidence_capture import capture_official_identity_evidence
@@ -85,7 +85,7 @@ def _create_proposed_cluster(session,item:ReviewQueueItem,decision:ResolutionDec
         return cluster
     raise AdjudicationInputError("queue item does not contain two identity candidates")
 
-def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,evidence_ids=(),expected_version:str|None=None):
+def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,evidence_ids=(),expected_version:str|None=None,review_batch_id:int|None=None):
     """Append a reviewer decision; never overwrite source entities or prior events."""
     if not reviewer.strip() or not rationale.strip():raise AdjudicationInputError("reviewer and rationale are required")
     item=session.get(ReviewQueueItem,queue_item_id)
@@ -93,6 +93,11 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
     current_version=_version(item)
     if expected_version is not None and expected_version!=current_version:raise StaleReviewError("review item changed; reload before deciding")
     action=action.upper();prior=item.status
+    if not review_batch_id:raise AdjudicationInputError("review_batch_id is required")
+    decision=session.get(ResolutionDecision,item.resolution_decision_id)
+    from .identity_review_batch import IdentityReviewBatchError,validate_identity_assignment
+    try:batch_item=validate_identity_assignment(session,review_batch_id,item,decision,action)
+    except IdentityReviewBatchError as exc:raise AdjudicationInputError(str(exc)) from exc
     allowed={
         "PENDING":{"PROPOSE_MATCH":"PROPOSED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT","DEFER":"DEFERRED"},
         "DEFERRED":{"PROPOSE_MATCH":"PROPOSED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT"},
@@ -101,9 +106,10 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
     if action not in allowed.get(prior,{}):raise AdjudicationInputError(f"invalid transition {prior} -> {action}")
     prior_events=session.scalars(select(AdjudicationEvent).where(AdjudicationEvent.queue_item_id==item.id).order_by(AdjudicationEvent.id)).all()
     if action=="APPROVE_MATCH":
-        proposer=next((x.reviewer for x in reversed(prior_events) if x.action=="PROPOSE_MATCH"),None)
+        proposal_event=next((x for x in reversed(prior_events) if x.action=="PROPOSE_MATCH"),None);proposer=proposal_event.reviewer if proposal_event else None
         if not proposer or proposer==reviewer:raise AdjudicationInputError("approval requires a different reviewer from the proposer")
-    decision=session.get(ResolutionDecision,item.resolution_decision_id)
+        proposal_binding=session.scalar(select(IdentityReviewDecisionBinding).where(IdentityReviewDecisionBinding.adjudication_event_id==proposal_event.id,IdentityReviewDecisionBinding.batch_item_id==batch_item.id))
+        if not proposal_binding:raise AdjudicationInputError("approval must use the proposal's frozen identity batch")
     digest=_evidence_digest(session,evidence_ids,_review_identity_ids(session,item,decision))
     if action in {"PROPOSE_MATCH","APPROVE_MATCH"} and not digest:raise AdjudicationInputError("match decisions require scoped evidence snapshots")
     if action=="APPROVE_MATCH":
@@ -118,8 +124,9 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
             for membership in session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)):
                 membership.status=cluster.status;membership.decided_by=reviewer;membership.decided_at=datetime.now(timezone.utc)
     result=allowed[prior][action];now=datetime.now(timezone.utc)
-    session.add(AdjudicationEvent(queue_item_id=item.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale,evidence_hash=digest))
-    append_ledger_event(session,"IDENTITY_REVIEW",item.id,reviewer,"REVIEWER",action,{"prior_state":prior,"resulting_state":result,"evidence_hash":digest,"rationale":rationale})
+    event=AdjudicationEvent(queue_item_id=item.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale,evidence_hash=digest);session.add(event);session.flush();session.add(IdentityReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id))
+    from .db import IdentityReviewBatch
+    append_ledger_event(session,"IDENTITY_REVIEW",item.id,reviewer,"REVIEWER",action,{"prior_state":prior,"resulting_state":result,"review_batch_id":review_batch_id,"review_batch_manifest_hash":session.get(IdentityReviewBatch,review_batch_id).manifest_hash,"evidence_hash":digest,"rationale":rationale})
     item.status=result;item.updated_at=now
     session.flush()
     return {"queue_item_id":item.id,"prior_state":prior,"resulting_state":result,"version":_version(item)}
