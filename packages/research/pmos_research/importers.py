@@ -3,19 +3,21 @@ import csv, hashlib, json, re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
+from urllib.parse import urlparse
 from openpyxl import load_workbook
 from sqlalchemy import select
 from .db import Claim, Contact, Entity, Evidence, ImportBatch, RawImportRow, ResolutionDecision
 from .entity_resolution import MatchState, canonicalize_name, resolve
 
 IDENTITY_HEADERS={"name","contact name","contact","investor name","firm","organization","organisation","company","institution"}
-CONTACT_HEADERS={"name","contact name","contact","person","full name"}
-FIRM_HEADERS={"investor name","firm","organization","organisation","company","institution","fund name"}
-EMAIL_HEADERS={"email","email address","e-mail"}; PHONE_HEADERS={"phone","phone number","telephone","mobile"}
-TITLE_HEADERS={"title","position","position / role","role","job title"}
-COUNTRY_HEADERS={"country","jurisdiction","country / jurisdiction","hq country"}; CITY_HEADERS={"city","location","hq city","headquarters"}
-TYPE_HEADERS={"type","institution type","investor type","category","segment"}; URL_HEADERS={"website","url","official url","company website"}
-MANDATE_HEADERS={"mandate","investment focus","strategy","description","notes"}
+CONTACT_HEADERS=("contact name","full name","person","contact","name")
+FIRM_HEADERS=("investor name","fund name","institution","organization","organisation","company","firm")
+EMAIL_HEADERS=("email address","e-mail","email"); PHONE_HEADERS=("phone number","telephone","mobile","phone")
+TITLE_HEADERS=("position / role","job title","position","title","role")
+COUNTRY_HEADERS=("country / jurisdiction","hq country","jurisdiction","country"); CITY_HEADERS=("hq city","headquarters","location","city")
+TYPE_HEADERS=("institution type","investor type","category","segment","type"); URL_HEADERS=("official url","company website","website","url")
+MANDATE_HEADERS=("investment focus","mandate","strategy","description","notes")
+ROLE_INBOXES={"info","contact","office","admin","hello","team","sales","support","enquiries","inquiries","press","media"}
 
 def _val(value)->str:
     if value is None:return ""
@@ -34,12 +36,13 @@ def detect_header(rows:Sequence[Sequence[object]])->int|None:
         labels={_header(v) for v in row if _val(v)}; identity=len(labels&IDENTITY_HEADERS); score=(identity>0,identity,len(labels),-index)
         if identity and (best is None or score>best[0]):best=(score,index)
     return None if best is None else best[1]
-def _first(row:dict[str,str],aliases:set[str])->str:return next((row[key] for key in aliases if row.get(key)),"")
+def _first(row:dict[str,str],aliases)->str:return next((row[key] for key in aliases if row.get(key)),"")
 def _source(path:Path,row_hash:str)->str:return f"private-import://{path.name}/{row_hash}"
 
 def _candidate_entity(session,name,country,url):
     candidates=session.scalars(select(Entity).where(Entity.canonical_name==canonicalize_name(name)).limit(20)).all()
-    exact=[x for x in candidates if country and x.country and x.country.casefold()==country.casefold()]
+    incoming_domain=urlparse(url).netloc.lower().removeprefix("www.")
+    exact=[x for x in candidates if country and x.country and x.country.casefold()==country.casefold() and not (incoming_domain and x.official_url and urlparse(x.official_url).netloc.lower().removeprefix("www.")!=incoming_domain)]
     if len(exact)==1:return exact[0],MatchState.EXACT,.97,("same normalized name","same jurisdiction")
     if len(candidates)==1:
         result=resolve({"name":name,"url":url},{"name":candidates[0].name,"url":candidates[0].official_url})
@@ -49,7 +52,11 @@ def _candidate_entity(session,name,country,url):
 def _candidate_contact(session,name,email):
     if email:
         matches=session.scalars(select(Contact).where(Contact.email.ilike(email)).limit(3)).all()
-        if len(matches)==1:return matches[0],MatchState.EXACT,.99,("same normalized email",)
+        local=email.split("@",1)[0].casefold()
+        if local in ROLE_INBOXES and matches:return matches[0],MatchState.REVIEW,.35,("shared or role inbox cannot identify a person",)
+        if len(matches)==1:
+            if canonicalize_name(name)==canonicalize_name(matches[0].name):return matches[0],MatchState.EXACT,.99,("same normalized email","compatible normalized name")
+            return matches[0],MatchState.CONFLICT,.2,("same email with conflicting person name",)
         if len(matches)>1:return matches[0],MatchState.CONFLICT,.25,("email belongs to multiple records",)
     if name:
         matches=session.scalars(select(Contact).where(Contact.name.ilike(name)).limit(3)).all()

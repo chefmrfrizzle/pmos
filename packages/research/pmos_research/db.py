@@ -144,6 +144,44 @@ class ResolutionDecision(Base):
     automatic: Mapped[bool] = mapped_column(Boolean, default=True)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class ReviewQueueItem(Base):
+    __tablename__ = "review_queue_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resolution_decision_id: Mapped[int] = mapped_column(ForeignKey("resolution_decisions.id"), unique=True, index=True)
+    queue_type: Mapped[str] = mapped_column(String(50), index=True)
+    priority: Mapped[int] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True)
+    reasons_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class AdjudicationEvent(Base):
+    __tablename__ = "adjudication_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    queue_item_id: Mapped[int] = mapped_column(ForeignKey("review_queue_items.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    evidence_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class CorroborationJob(Base):
+    __tablename__ = "corroboration_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    source_domain: Mapped[str] = mapped_column(String(300), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    checkpoint_json: Mapped[str] = mapped_column(Text, default="{}")
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("entity_id", "source_url", name="uq_corroboration_target"),)
+
 def init_db() -> None:
     PRIVATE_ROOT.mkdir(parents=True,exist_ok=True)
     Base.metadata.create_all(engine)

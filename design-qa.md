@@ -35,13 +35,24 @@ The landscape relationship view now displays a visible phone/swipe instruction, 
 - Keyboard focus, dialog semantics, scroll-region labeling, disabled acknowledgement state, and icon-button accessible names are covered by browser tests.
 - Browser error overlay: none.
 - Browser page errors: none.
-- Automated result: 10 Playwright scenarios passed across desktop and mobile.
+- Automated result: 14 Playwright scenarios passed across desktop and mobile.
 
 ## Comparison history
 
 - P1: Guided demo reset after route navigation and counsel acknowledgement had no durable UI state. Fixed by moving both into versioned persistent demo state and adding a contextual counsel action inside step 2. Post-fix browser test passes through reload.
 - P1: Mobile/landscape graph relied on undiscoverable overflow. Fixed with swipe guidance, arrow controls, scroll snapping, touch panning, and partial-node affordance. Post-fix measurement and browser test confirm horizontal movement.
 - P2: Mobile header actions clipped at 390px. Fixed with a three-column header and accessible compact Search/Guided Demo icon controls. Post-fix portrait capture shows both controls.
+- P1: The supplied 1068 × 590 @2x landscape capture showed route labels colliding with the absolutely positioned active-vertical and privacy controls. Source: `/tmp/codex-remote-attachments/01a03aac-c632-7f51-8e34-7ddf871452a8/2E44E272-AA3D-4437-850F-FF4D7CABD5F1/1-Photo-1.jpg`.
+- Fix: converted the drawer to a 100dvh flex layout, made routes independently scrollable, placed the footer in normal flow, and used a two-column landscape route grid. Implementation: `/tmp/pmos-qa-2026-08-26-drawer/mobile-landscape-drawer.png`, captured at 534 × 295 CSS pixels / device scale 1 to normalize the source's 2× pixels.
+- Post-fix evidence: route region ends at y=223; footer begins at y=227. All seven routes, active vertical, privacy control, and close control are visible with no overlap. Browser page errors: none.
+
+### Landscape drawer fidelity surfaces
+
+- Fonts and typography: existing DM Sans labels remain legible at compact landscape sizes; active route weight and hierarchy are preserved.
+- Spacing and layout rhythm: 4px separation between independently bounded route and footer regions; footer controls align on a two-column baseline.
+- Colors and visual tokens: navy, active blue, gold, white, and muted text match the supplied screenshot's established PMOS system.
+- Image quality and assets: the drawer uses the existing Phosphor icon set and PMOS mark; no replacement raster or handcrafted SVG assets were introduced.
+- Copy and content: all route names remain intact, with Verification added as the user-requested adjudication workflow. Privacy and active-vertical labels remain explicit.
 
 No actionable P0, P1, or P2 findings remain. A future P3 refinement could animate the graph-edge focus state when an arrow control is used.
 

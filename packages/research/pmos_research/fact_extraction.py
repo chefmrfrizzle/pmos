@@ -9,6 +9,13 @@ EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 PHONE_RE = re.compile(r"(?:\+\d{1,3}[\s().-]*)?(?:\d[\s().-]*){7,14}")
 KEY_LINK_TERMS = ("about","team","leadership","people","management","investment","portfolio","strategy","annual report","report","governance","contact","private wealth","family office","private sales","fiduciary")
 
+def identity_supported(name:str,text:str)->bool:
+    stop={"the","and","of","capital","group","company","management","investment","investments","partners"}
+    tokens=[x for x in re.findall(r"[a-z0-9]+",(name or "").lower()) if len(x)>2 and x not in stop]
+    haystack=set(re.findall(r"[a-z0-9]+",(text or "").lower()))
+    required=1 if len(tokens)==1 else min(2,len(tokens))
+    return bool(tokens) and sum(token in haystack for token in set(tokens))>=required
+
 def discover_same_domain_links(base_url: str, html: str, limit: int = 12) -> list[str]:
     soup=BeautifulSoup(html,"html.parser")
     base_host=urlparse(base_url).netloc.lower().removeprefix("www.")

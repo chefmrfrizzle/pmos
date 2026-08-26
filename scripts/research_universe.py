@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "packages/research"
 from pmos_research.db import init_db, SessionLocal, Entity, Evidence, Claim
 from pmos_research.adapters.official_web import OfficialWebAdapter
 from pmos_research.adapters.gleif import search_lei
-from pmos_research.fact_extraction import discover_same_domain_links, extract_claims
+from pmos_research.fact_extraction import discover_same_domain_links, extract_claims, identity_supported
 
 ap=argparse.ArgumentParser()
 ap.add_argument("--universe")
@@ -21,7 +21,7 @@ with SessionLocal() as s:
     if args.limit: entities=entities[:args.limit]
     for i,e in enumerate(entities,1):
         print(f"[{i}/{len(entities)}] {e.name}")
-        confidence=0.0; queue=[e.official_url] if e.official_url else []; seen=set(); fetched=0
+        confidence=0.0; identity_corroborated=False; queue=[e.official_url] if e.official_url else []; seen=set(); fetched=0
         while queue and fetched<args.max_pages:
             url=queue.pop(0)
             if not url or url in seen: continue
@@ -37,16 +37,20 @@ with SessionLocal() as s:
                 for claim in extract_claims(snap["text"],actual):
                     exists=s.query(Claim).filter_by(entity_id=e.id,field=claim["field"],value=claim["value"],source_url=actual).first()
                     if not exists: s.add(Claim(entity_id=e.id,**claim))
+                if identity_supported(e.name,snap["title"]+" "+snap["text"][:10000]):
+                    identity_corroborated=True
+                    exists=s.query(Claim).filter_by(entity_id=e.id,field="official_identity",value=e.name,source_url=actual).first()
+                    if not exists:s.add(Claim(entity_id=e.id,field="official_identity",value=e.name,source_url=actual,source_type="official",confidence=.9,verification_status="SUPPORTED",extractor="deterministic_identity_v1",evidence_hash=snap["hash"]))
                 if fetched==1:
                     queue.extend(discover_same_domain_links(actual,snap.get("html","") ,limit=max(args.max_pages*2,10)))
-                confidence=max(confidence,1.0)
+                confidence=max(confidence,.9 if identity_corroborated else .35)
                 print("  fetched",actual)
             except Exception as ex:
                 print("  official fetch failed:",url,ex)
         try:
             leis=search_lei(e.name,e.country)
             if leis:
-                confidence=max(confidence,0.95)
+                confidence=max(confidence,0.75)
                 candidate=leis[0]
                 s.add(Claim(entity_id=e.id,field="lei_candidate",value=str(candidate),source_url="https://api.gleif.org/",confidence=0.95))
                 print("  LEI candidate:",candidate)
@@ -54,5 +58,5 @@ with SessionLocal() as s:
             print("  LEI lookup failed:",ex)
         e.evidence_confidence=confidence*100
         e.last_verified=datetime.now(timezone.utc)
-        e.verification_status="partially_verified" if confidence else "needs_verification"
+        e.verification_status="SUPPORTED" if identity_corroborated else "EVIDENCE_COLLECTED" if fetched else "NEEDS_VERIFICATION"
         s.commit()
