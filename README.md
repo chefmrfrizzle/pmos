@@ -106,6 +106,8 @@ Private entity routes are absent by default (`PMOS_AUTH_MODE=disabled`). Local d
 
 Institutional deployments use `PMOS_AUTH_MODE=oidc` with `PMOS_OIDC_ISSUER`, `PMOS_OIDC_AUDIENCE`, and a same-issuer HTTPS `PMOS_OIDC_JWKS_URL`. The API requires short-lived signed RS256 access tokens with MFA, recent `auth_time`, unique `jti`, an approved PMOS role, action permissions, tenant/purpose binding, and universe-level object scope. Emergency revocation uses hashed token identifiers in private deployment configuration. Browser session/CSRF integration and enterprise IdP session revocation remain deployment-specific; the public Vercel demo contains no private API.
 
+Public-registry coverage is not verification. Run `./.venv/bin/python scripts/run_isolated_job.py universe-coverage` to measure required category/region representation, jurisdiction and official-URL completeness, qualifying exact identity evidence, diligence-case inclusion, and decision readiness without emitting entity names.
+
 ### Import your private databases
 
 Keep the private seed ZIP outside the public repo, then:

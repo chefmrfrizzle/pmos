@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -144,6 +144,15 @@ async def correlation_id(request:Request,call_next):
 
 def audit_access(session,principal:Principal,action:str,payload:dict):
     append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,{**payload,"tenant_id":principal.tenant_id,"purpose":principal.active_purpose,"token_id_hash":principal.token_id_hash},principal.correlation_id)
+
+@app.get("/universe-coverage")
+def universe_coverage_latest(principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"coverage:read",{"ADMIN"})
+    if "*" not in principal.universes:raise HTTPException(status_code=403,detail="aggregate coverage requires all-universe scope")
+    with SessionLocal() as s:
+        run=s.scalar(select(UniverseCoverageRun).order_by(UniverseCoverageRun.id.desc()))
+        if not run:raise HTTPException(status_code=404,detail="no coverage assessment is available")
+        report=json.loads(run.report_json);audit_access(s,principal,"UNIVERSE_COVERAGE_READ",{"coverage_run_id":run.id,"report_hash":run.report_hash,"status":run.status});s.commit();return report
 
 @app.get("/identity-review")
 def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):

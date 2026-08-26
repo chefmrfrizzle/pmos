@@ -6,6 +6,8 @@ Machine-written or generic pages are not treated as inherently authoritative. So
 
 Deterministic research extraction uses conservative, predicate-specific institutional phrases. A phrase hit produces a bounded candidate passage only when that predicate was requested for the source. Generic mentions do not become assertions. Stored snapshots may be re-extracted after a versioned rule improvement, but the result remains `HUMAN_REVIEW_REQUIRED`; re-extraction cannot create claims, resolve identity, or complete a diligence check.
 
+Universe coverage is measured as a ladder, not a binary marketing claim: registry representation, jurisdiction and official-URL completeness, exact identity evidence, an open diligence case, and decision readiness. The aggregate report contains no entity names. Missing required categories/regions, unmapped country codes, absent evidence, and incomplete cases keep the assessment `INCOMPLETE`; a recognizable institution in the registry is never counted as evidence-backed or ready merely because its name and homepage are present.
+
 Private source rows generate provenance-linked candidate claims only. Deterministic resolution auto-links exact evidence; ambiguous names stay separate and enter review.
 
 Official-web research validates public HTTP(S) targets and every redirect against private/local addresses, fails closed when robots rules are unavailable, rate-limits per host, limits response size and content type, and records bounded job outcomes. A successful fetch creates evidence; only predicate-specific matching can create a `SUPPORTED` claim. `VERIFIED` remains a human promotion.

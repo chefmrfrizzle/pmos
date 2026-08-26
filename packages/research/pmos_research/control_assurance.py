@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,
+    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -39,6 +39,13 @@ def run_control_assurance(session)->dict:
 
     passages=session.scalars(select(EvidencePassage)).all();controls.append(_control("evidence_passage_hash_integrity",len(passages),sum(hashlib.sha256(x.passage.encode()).hexdigest()!=x.passage_hash for x in passages)))
     snapshots=session.scalars(select(ResearchDocumentSnapshot)).all();controls.append(_control("research_snapshot_hash_integrity",len(snapshots),sum(hashlib.sha256(x.normalized_text.encode()).hexdigest()!=x.text_hash for x in snapshots)))
+
+    coverage_runs=session.scalars(select(UniverseCoverageRun)).all();bad=0
+    for run in coverage_runs:
+        try:parsed=json.loads(run.report_json);valid_status=parsed.get("status")==run.status
+        except Exception:valid_status=False
+        bad+=hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or not valid_status
+    controls.append(_control("universe_coverage_report_integrity",len(coverage_runs),bad))
 
     attempts=session.scalars(select(SourceRetrievalAttempt).order_by(SourceRetrievalAttempt.source_candidate_id,SourceRetrievalAttempt.attempt_number)).all();grouped={};bad=0
     for attempt in attempts:grouped.setdefault(attempt.source_candidate_id,[]).append(attempt)

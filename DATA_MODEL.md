@@ -30,6 +30,8 @@ Identity review packets intentionally exclude `RawImportRow.original_row_json` a
 
 `SourceRetrievalAttempt` is the append-only operational history for a source candidate. It stores a monotonic attempt number, stable outcome/error class, optional HTTP status, retryability, and bounded next-attempt timestamp. It excludes document bodies, credentials, and raw exception messages. Control assurance verifies sequence continuity and retry-state consistency.
 
+`UniverseCoverageRun` stores a content-hashed aggregate assessment with no entity names. It separates registry representation, metadata completeness, exact identity evidence, diligence-case inclusion, and decision readiness across required institutional categories and geographic regions. Historical runs remain available for coverage trend and change review.
+
 PDF snapshots use the same source/snapshot models as HTML, while each extracted `EvidencePassage.page` preserves its PDF page number. The raw PDF is not stored in the application database or public repository; the source document retains its URL and content-addressed normalized-text snapshot for review.
 
 `SourceChangeEvent` immutably links the prior and resulting document snapshots with both hashes, text similarity, added/removed token counts, detection time, and review state. Unchanged retrievals remain explicit `UNCHANGED` events. Changed sources begin `HUMAN_REVIEW_REQUIRED`. `SourceChangeReviewEvent` preserves acknowledgements, deferrals, and escalations without rewriting either snapshot or changing downstream claims.
