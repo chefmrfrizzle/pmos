@@ -14,6 +14,7 @@ from .db import (
 from .fact_extraction import identity_supported
 from .evidence_capture import capture_official_identity_evidence
 from .audit_ledger import append_ledger_event
+from .source_discovery import persist_source_candidates
 
 PRIORITY_TYPES={"venture capital","private equity","corporate venture capital","family office","asset manager","hedge fund","government","limited partner","pension","sovereign wealth"}
 
@@ -189,7 +190,8 @@ def run_corroboration_job(session,job:CorroborationJob,adapter)->str:
             job.status="SUPPORTED";entity.verification_status="EVIDENCE_COLLECTED";entity.evidence_confidence=max(entity.evidence_confidence,35)
         else:
             job.status="HUMAN_REVIEW_REQUIRED";entity.verification_status="EVIDENCE_COLLECTED";entity.evidence_confidence=max(entity.evidence_confidence,35)
-        checkpoint={"source_url":source_url,"evidence_hash":content_hash,"identity_supported":supported}
+        discovery=persist_source_candidates(session,entity,source_url,snapshot.get("html","")) if snapshot.get("html") else Counter()
+        checkpoint={"source_url":source_url,"evidence_hash":content_hash,"identity_supported":supported,"source_candidates_queued":discovery.get("queued",0)}
         if supported:checkpoint.update(captured)
         job.checkpoint_json=json.dumps(checkpoint,sort_keys=True)
         job.last_error=None;append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_COMPLETED",{"entity_id":job.entity_id,"status":job.status,"evidence_hash":content_hash,"identity_supported":supported});return job.status

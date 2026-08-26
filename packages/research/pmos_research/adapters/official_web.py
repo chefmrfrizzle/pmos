@@ -56,7 +56,10 @@ class OfficialWebAdapter:
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
                     if len(body)>self.max_bytes or response.num_bytes_downloaded>self.max_bytes:raise ResponseTooLarge("streamed response is too large")
-                return httpx.Response(response.status_code,headers=response.headers,content=bytes(body),request=response.request)
+                # iter_bytes() returns decoded bytes. Do not carry wire-encoding or
+                # length headers into the reconstructed in-memory response.
+                headers={k:v for k,v in response.headers.items() if k.casefold() not in {"content-encoding","content-length","transfer-encoding"}}
+                return httpx.Response(response.status_code,headers=headers,content=bytes(body),request=response.request)
         raise httpx.TooManyRedirects("too many redirects")
 
     def allowed(self,url:str)->bool:

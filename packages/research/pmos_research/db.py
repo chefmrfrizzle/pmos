@@ -182,6 +182,44 @@ class CorroborationJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("entity_id", "source_url", name="uq_corroboration_target"),)
 
+class ResearchSourceCandidate(Base):
+    __tablename__ = "research_source_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    source_domain: Mapped[str] = mapped_column(String(300), index=True)
+    document_type: Mapped[str] = mapped_column(String(80), index=True)
+    target_predicates_json: Mapped[str] = mapped_column(Text, default="[]")
+    link_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    discovered_from_url: Mapped[str] = mapped_column(Text)
+    discovery_score: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="PENDING_REVIEW", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("entity_id", "source_url", name="uq_entity_research_source"),)
+
+class ResearchDocumentSnapshot(Base):
+    __tablename__ = "research_document_snapshots"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_candidate_id: Mapped[int] = mapped_column(ForeignKey("research_source_candidates.id"), index=True)
+    source_document_id: Mapped[int] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    normalized_text: Mapped[str] = mapped_column(Text)
+    text_hash: Mapped[str] = mapped_column(String(64), index=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("source_candidate_id", "text_hash", name="uq_candidate_document_snapshot"),)
+
+class ResearchPassageCandidate(Base):
+    __tablename__ = "research_passage_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_candidate_id: Mapped[int] = mapped_column(ForeignKey("research_source_candidates.id"), index=True)
+    evidence_passage_id: Mapped[int] = mapped_column(ForeignKey("evidence_passages.id"), index=True)
+    predicate: Mapped[str] = mapped_column(String(120), index=True)
+    confidence: Mapped[float] = mapped_column(Float)
+    extractor: Mapped[str] = mapped_column(String(100), default="deterministic_passage_v1")
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("source_candidate_id", "evidence_passage_id", "predicate", name="uq_candidate_passage_predicate"),)
+
 class DiligenceCase(Base):
     __tablename__ = "diligence_cases"
     id: Mapped[int] = mapped_column(primary_key=True)

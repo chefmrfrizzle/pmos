@@ -10,6 +10,8 @@ Import limits can only be adjusted within hard safety ceilings through `PMOS_IMP
 
 Prepare persistent review and corroboration queues with `python scripts/prepare_adjudication_queue.py`. Run first-party work in bounded batches with `python scripts/run_corroboration_jobs.py --limit 10`. Robots denial or retrieval failure is a recorded outcome, never a reason to bypass controls or mark a claim verified.
 
+After official identity corroboration, discover review-only diligence documents with `python scripts/discover_case_sources.py --limit 10 --per-entity 20`. Retrieve a bounded cohort with `python scripts/retrieve_source_candidates.py --limit 5`. Both commands emit aggregate outcomes only. Retrieval can create sanitized document snapshots and exact candidate passages; it cannot create or complete claims/checks. Review `RETRIEVED_REVIEW_REQUIRED`, `UNSUPPORTED_CONTENT_TYPE`, `BLOCKED_ROBOTS`, `BLOCKED_SIZE`, and `RETRY_REQUIRED` separately. Never reset a terminal outcome merely to increase coverage.
+
 ## Public release
 
 Build before the final check so compiled browser bundles and source maps are inspected:

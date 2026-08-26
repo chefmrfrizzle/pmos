@@ -12,6 +12,8 @@ from pmos_research.runtime_isolation import apply_resource_limits,sanitized_envi
 
 JOBS={
     "corroboration":"run_corroboration_jobs.py",
+    "source-discovery":"discover_case_sources.py",
+    "source-retrieval":"retrieve_source_candidates.py",
     "identity-audit":"audit_identity_matches.py",
     "lei-research":"research_lei_candidates.py",
     "ledger-verify":"verify_audit_ledger.py",

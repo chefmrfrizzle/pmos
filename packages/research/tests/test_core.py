@@ -132,6 +132,14 @@ def test_official_adapter_streams_with_decompressed_size_cap():
     adapter.client=httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(200,content=b"x"*70000,headers={"content-type":"text/html"})),trust_env=False)
     with pytest.raises(ResponseTooLarge):adapter._get("https://example.test/")
 
+def test_official_adapter_does_not_double_decode_reconstructed_response():
+    import gzip
+    adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))]);adapter.delay=.5
+    body=gzip.compress(b"<html><title>Compressed</title></html>")
+    adapter.client=httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(200,content=body,headers={"content-type":"text/html","content-encoding":"gzip"})),trust_env=False)
+    response=adapter._get("https://example.test/")
+    assert response.text=="<html><title>Compressed</title></html>" and "content-encoding" not in response.headers
+
 def test_robots_failure_is_fail_closed():
     adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))])
     class Broken:
