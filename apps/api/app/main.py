@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipMentionReviewAssignment,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -33,6 +33,7 @@ from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate
 from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_batch_packet,freeze_review_batch
 from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,close_batch,revoke_assignment
 from pmos_research.publisher_independence import PublisherIndependenceError,adjudicate_publisher_independence,build_publisher_independence_packet,propose_publisher_independence
+from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,revoke_mention_assignment
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -92,6 +93,12 @@ class RelationshipMentionActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
     target_entity_id:Optional[int]=Field(default=None,gt=0)
+    review_batch_id:int=Field(gt=0)
+
+class RelationshipMentionBatchRequest(BaseModel):
+    universe:str=Field(min_length=1,max_length=100)
+    status:str=Field(default="ENTITY_RESOLUTION_REQUIRED",min_length=5,max_length=40)
+    limit:int=Field(default=100,ge=1,le=100)
 
 class PublisherIndependenceProposalRequest(BaseModel):
     source_domain:str=Field(min_length=4,max_length=300)
@@ -393,6 +400,47 @@ def relationship_mention_queue(status:str="ENTITY_RESOLUTION_REQUIRED",limit:int
             if len(rows)>=limit:break
         audit_access(s,principal,"RELATIONSHIP_MENTIONS_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
 
+@app.post("/relationship-mentions/batches")
+def relationship_mention_batch_create(body:RelationshipMentionBatchRequest,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"identity:review",{"REVIEWER","ADMIN"},body.universe)
+    with SessionLocal() as s:
+        try:batch=freeze_mention_review_batch(s,principal.subject,body.universe,body.status,body.limit)
+        except RelationshipMentionReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_mention_review_batch_packet(s,batch.id);audit_access(s,principal,"RELATIONSHIP_MENTION_BATCH_FROZEN",{"batch_id":batch.id,"universe":body.universe,"manifest_hash":batch.manifest_hash,"item_count":batch.item_count});s.commit();return packet
+
+@app.get("/relationship-mentions/batches/{batch_id}")
+def relationship_mention_batch_detail(batch_id:int,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        try:packet=build_mention_review_batch_packet(s,batch_id)
+        except RelationshipMentionReviewError as exc:raise HTTPException(status_code=404,detail=str(exc))
+        authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"},packet["criteria"]["universe"]);audit_access(s,principal,"RELATIONSHIP_MENTION_BATCH_READ",{"batch_id":batch_id,"manifest_hash":packet["manifest_hash"],"manifest_valid":packet["manifest_valid"]});s.commit();return packet
+
+@app.post("/relationship-mentions/batches/{batch_id}/assignments")
+def relationship_mention_assignment_create(batch_id:int,body:IdentityAssignmentRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_mention_review_batch_packet(s,batch_id);authorize(principal,"identity:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:assignment=assign_mention_reviewer(s,batch_id,body.reviewer,body.reviewer_role,principal.subject,body.rationale,body.expires_hours)
+        except RelationshipMentionReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"RELATIONSHIP_MENTION_ASSIGNED",{"batch_id":batch_id,"assignment_id":assignment.id,"reviewer":assignment.reviewer,"reviewer_role":assignment.reviewer_role,"expires_at":assignment.expires_at.isoformat()});s.commit();return {"id":assignment.id,"batch_id":batch_id,"reviewer":assignment.reviewer,"reviewer_role":assignment.reviewer_role,"status":assignment.status,"expires_at":assignment.expires_at.isoformat()}
+
+@app.post("/relationship-mentions/assignments/{assignment_id}/revoke")
+def relationship_mention_assignment_revoke(assignment_id:int,body:EvidenceLifecycleRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        assignment=s.get(RelationshipMentionReviewAssignment,assignment_id)
+        if not assignment:raise HTTPException(status_code=404,detail="unknown mention review assignment")
+        packet=build_mention_review_batch_packet(s,assignment.batch_id);authorize(principal,"identity:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:assignment=revoke_mention_assignment(s,assignment_id,principal.subject,body.rationale)
+        except RelationshipMentionReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"RELATIONSHIP_MENTION_ASSIGNMENT_REVOKED",{"assignment_id":assignment.id,"batch_id":assignment.batch_id});s.commit();return {"id":assignment.id,"status":assignment.status}
+
+@app.post("/relationship-mentions/batches/{batch_id}/close")
+def relationship_mention_batch_close(batch_id:int,body:EvidenceLifecycleRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_mention_review_batch_packet(s,batch_id);authorize(principal,"identity:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:batch=close_mention_review_batch(s,batch_id,principal.subject,body.rationale)
+        except RelationshipMentionReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"RELATIONSHIP_MENTION_BATCH_CLOSED",{"batch_id":batch.id});s.commit();return {"id":batch.id,"status":batch.status}
+
 @app.post("/relationship-mentions/{mention_id}/actions")
 def relationship_mention_action(mention_id:int,body:RelationshipMentionActionRequest,principal:Principal=Depends(authenticate_private_request)):
     approval=body.action.upper() in {"APPROVE_TARGET","REJECT_TARGET"};permission="identity:approve" if approval else "identity:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
@@ -403,9 +451,10 @@ def relationship_mention_action(mention_id:int,body:RelationshipMentionActionReq
             if not target:raise HTTPException(status_code=404,detail="target entity not found")
             authorize(principal,permission,roles,target.universe)
         elif packet.get("resolution") and packet["resolution"].get("target_entity"):authorize(principal,permission,roles,packet["resolution"]["target_entity"]["universe"])
-        try:mention=adjudicate_relationship_mention(s,mention_id,body.action,principal.subject,body.rationale,body.expected_status,body.target_entity_id)
+        reviewer_role=next((x for x in ("REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:mention=adjudicate_relationship_mention(s,mention_id,body.action,principal.subject,body.rationale,body.expected_status,body.target_entity_id,body.review_batch_id,reviewer_role)
         except RelationshipResearchError as exc:raise HTTPException(status_code=422,detail=str(exc))
-        result=build_relationship_mention_packet(s,mention.id);audit_access(s,principal,"RELATIONSHIP_MENTION_ACTION",{"mention_id":mention.id,"action":body.action.upper(),"resulting_state":mention.status,"resolved_entity_id":mention.resolved_entity_id,"resulting_candidate_id":mention.resulting_candidate_id});s.commit();return result
+        result=build_relationship_mention_packet(s,mention.id);audit_access(s,principal,"RELATIONSHIP_MENTION_ACTION",{"mention_id":mention.id,"review_batch_id":body.review_batch_id,"action":body.action.upper(),"resulting_state":mention.status,"resolved_entity_id":mention.resolved_entity_id,"resulting_candidate_id":mention.resulting_candidate_id});s.commit();return result
 
 @app.post("/relationship-candidates/{candidate_id}/actions")
 def relationship_candidate_action(candidate_id:int,body:RelationshipCandidateActionRequest,principal:Principal=Depends(authenticate_private_request)):

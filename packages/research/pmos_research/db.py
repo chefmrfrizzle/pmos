@@ -876,6 +876,58 @@ class RelationshipMentionResolutionEvent(Base):
     identity_package_hash: Mapped[str] = mapped_column(String(64))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class RelationshipMentionReviewBatch(Base):
+    __tablename__ = "relationship_mention_review_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), default="FROZEN", index=True)
+    criteria_json: Mapped[str] = mapped_column(Text)
+    manifest_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    item_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class RelationshipMentionReviewBatchItem(Base):
+    __tablename__ = "relationship_mention_review_batch_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_review_batches.id"), index=True)
+    mention_candidate_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_candidates.id"), index=True)
+    item_status: Mapped[str] = mapped_column(String(40))
+    identity_fingerprint: Mapped[str] = mapped_column(String(64))
+    __table_args__ = (UniqueConstraint("batch_id","mention_candidate_id",name="uq_relationship_mention_batch_item"),)
+
+class RelationshipMentionReviewAssignment(Base):
+    __tablename__ = "relationship_mention_review_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_review_batches.id"), index=True)
+    reviewer: Mapped[str] = mapped_column(String(150), index=True)
+    reviewer_role: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(30), default="ACTIVE", index=True)
+    assigned_by: Mapped[str] = mapped_column(String(150))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    revocation_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class RelationshipMentionReviewAssignmentEvent(Base):
+    __tablename__ = "relationship_mention_review_assignment_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_review_assignments.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    resulting_state: Mapped[str] = mapped_column(String(30))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class RelationshipMentionReviewDecisionBinding(Base):
+    __tablename__ = "relationship_mention_review_decision_bindings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_review_batch_items.id"), index=True)
+    mention_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("relationship_mention_candidate_events.id"), unique=True, nullable=True)
+    resolution_event_id: Mapped[Optional[int]] = mapped_column(ForeignKey("relationship_mention_resolution_events.id"), unique=True, nullable=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("relationship_mention_review_assignments.id"), index=True)
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class RelationshipAssertionEvidence(Base):
     __tablename__ = "relationship_assertion_evidence"
     id: Mapped[int] = mapped_column(primary_key=True)

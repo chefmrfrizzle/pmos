@@ -20,6 +20,8 @@ Identity review routes are private-by-default, role/action authorized, and filte
 
 Unresolved relationship mentions use the same maker/checker principle. `identity:write` may propose a registered target; only a different `REVIEWER` or `ADMIN` with `identity:approve` may approve it. Material changes to either identity or the evidence after proposal invalidate the package and block linkage.
 
+Mention decisions additionally require a content-addressed frozen batch and a named, unexpired assignment with the action-appropriate role. Assignment, revocation, expiry, batch closure, and decision binding are ledgered. The proposal changes the queue state and therefore cannot reuse the maker’s frozen batch for checker approval.
+
 The local ledger is SHA-256 hash-chained per decision stream and SQLite installs fail-closed triggers that reject ledger updates and deletes. `scripts/verify_audit_ledger.py` replays every reachable stream and fails on changed payloads, broken predecessor hashes, or changed event hashes. Production PostgreSQL must additionally isolate ledger insert permissions from operational roles, sign periodic roots with an external key, and export roots to independent retention.
 
 Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.
