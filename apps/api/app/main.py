@@ -33,7 +33,7 @@ from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate
 from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_batch_packet,freeze_review_batch
 from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,close_batch,revoke_assignment
 from pmos_research.publisher_independence import PublisherIndependenceError,adjudicate_publisher_independence,build_publisher_independence_packet,propose_publisher_independence
-from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,revoke_mention_assignment
+from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,assigned_mention_batch_items,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,revoke_mention_assignment
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -390,15 +390,18 @@ def relationship_candidate_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Qu
         audit_access(s,principal,"RELATIONSHIP_CANDIDATES_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
 
 @app.get("/relationship-mentions")
-def relationship_mention_queue(status:str="ENTITY_RESOLUTION_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+def relationship_mention_queue(review_batch_id:int=Query(gt=0),limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
     authorize(principal,"relationships:review",{"RESEARCHER","REVIEWER","ADMIN"})
     with SessionLocal() as s:
-        rows=[]
-        for mention in s.scalars(select(RelationshipMentionCandidate).where(RelationshipMentionCandidate.status==status.upper()).order_by(RelationshipMentionCandidate.id).limit(limit*10)):
+        reviewer_role=next((x for x in ("REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:batch_items=assigned_mention_batch_items(s,review_batch_id,principal.subject,reviewer_role)
+        except RelationshipMentionReviewError as exc:raise HTTPException(status_code=403,detail=str(exc))
+        batch_packet=build_mention_review_batch_packet(s,review_batch_id);authorize(principal,"relationships:review",{"RESEARCHER","REVIEWER","ADMIN"},batch_packet["criteria"]["universe"]);rows=[]
+        for item in batch_items[:limit]:
+            mention=s.get(RelationshipMentionCandidate,item.mention_candidate_id)
             packet=build_relationship_mention_packet(s,mention.id)
             if "*" in principal.universes or packet["source_entity"]["universe"] in principal.universes:rows.append(packet)
-            if len(rows)>=limit:break
-        audit_access(s,principal,"RELATIONSHIP_MENTIONS_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+        audit_access(s,principal,"RELATIONSHIP_MENTIONS_LISTED",{"review_batch_id":review_batch_id,"limit":limit,"result_count":len(rows)});s.commit();return rows
 
 @app.post("/relationship-mentions/batches")
 def relationship_mention_batch_create(body:RelationshipMentionBatchRequest,principal:Principal=Depends(authenticate_private_request)):

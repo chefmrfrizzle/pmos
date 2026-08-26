@@ -68,6 +68,16 @@ def validate_mention_review_decision(session,batch_id:int,mention:RelationshipMe
     if assignment.reviewer_role!=reviewer_role.upper() or (approval and assignment.reviewer_role!="REVIEWER"):raise RelationshipMentionReviewError("mention assignment role does not authorize this action")
     return item,assignment
 
+def assigned_mention_batch_items(session,batch_id:int,reviewer:str,reviewer_role:str)->list[RelationshipMentionReviewBatchItem]:
+    batch=session.get(RelationshipMentionReviewBatch,batch_id)
+    if not batch or batch.status!="FROZEN" or not build_mention_review_batch_packet(session,batch_id)["manifest_valid"]:raise RelationshipMentionReviewError("a valid frozen mention review batch is required")
+    assignment=session.scalar(select(RelationshipMentionReviewAssignment).where(RelationshipMentionReviewAssignment.batch_id==batch.id,RelationshipMentionReviewAssignment.reviewer==reviewer,RelationshipMentionReviewAssignment.status=="ACTIVE"))
+    if not assignment or _aware(assignment.expires_at)<=_now():
+        if assignment:assignment.status="EXPIRED";session.add(RelationshipMentionReviewAssignmentEvent(assignment_id=assignment.id,action="EXPIRE",prior_state="ACTIVE",resulting_state="EXPIRED",actor="authorization-check",rationale="Assignment reached its bounded expiry"));append_ledger_event(session,"RELATIONSHIP_MENTION_REVIEW_ASSIGNMENT",assignment.id,"authorization-check","SYSTEM","EXPIRE",{"batch_id":assignment.batch_id});session.flush()
+        raise RelationshipMentionReviewError("active unexpired mention review assignment is required")
+    if assignment.reviewer_role!=reviewer_role.upper():raise RelationshipMentionReviewError("mention assignment role does not authorize this access")
+    return session.scalars(select(RelationshipMentionReviewBatchItem).where(RelationshipMentionReviewBatchItem.batch_id==batch.id).order_by(RelationshipMentionReviewBatchItem.id)).all()
+
 def bind_mention_review_decision(session,batch_item_id:int,assignment_id:int,mention_event_id:int|None=None,resolution_event_id:int|None=None):
     if bool(mention_event_id)==bool(resolution_event_id):raise RelationshipMentionReviewError("exactly one mention decision event must be bound")
     binding=RelationshipMentionReviewDecisionBinding(batch_item_id=batch_item_id,assignment_id=assignment_id,mention_event_id=mention_event_id,resolution_event_id=resolution_event_id);session.add(binding);session.flush();return binding

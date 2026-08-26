@@ -44,6 +44,8 @@ Use `PROPOSE_TARGET`—not direct linkage—with a distinct registered target an
 
 First freeze `ENTITY_RESOLUTION_REQUIRED` work with `POST /relationship-mentions/batches`, then have an `ADMIN` assign a named `RESEARCHER` through the batch assignment route. Include that batch ID with `PROPOSE_TARGET`. Freeze a new `TARGET_PROPOSED` batch, assign a different `REVIEWER`, and include the new batch ID with `APPROVE_TARGET` or `REJECT_TARGET`. Assignments expire after the configured bounded period and may be revoked; close superseded batches instead of reusing stale manifests.
 
+Reviewers retrieve exact assigned packets with `GET /relationship-mentions?review_batch_id=<id>`. Calls without a valid frozen batch, an assignment for the authenticated subject, an unexpired assignment, or the matching assignment role fail closed. Administrators should use batch manifests and aggregate counts for staffing; do not assign themselves merely to browse mention text.
+
 For aggregate queue preparation, run `python scripts/run_isolated_job.py mention-review-batches --status ENTITY_RESOLUTION_REQUIRED --limit-per-universe 100`. The job freezes one content-addressed batch per represented universe and prints counts and batch IDs only. It does not print mention text, assign staff, propose targets, or adjudicate anything.
 
 Private control and ledger scripts select their datastore only through `PMOS_DB_URL`; they reject unsupported command-line arguments. Set the absolute external SQLite URL in the command environment and confirm the reported populations are consistent with the intended datastore before relying on the result.

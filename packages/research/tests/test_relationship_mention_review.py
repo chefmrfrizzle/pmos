@@ -5,7 +5,7 @@ from sqlalchemy import create_engine,select
 from sqlalchemy.orm import sessionmaker
 
 from pmos_research.db import Base,Entity,EvidencePassage,RelationshipMentionCandidate,RelationshipMentionReviewBatchItem,SourceDocument
-from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,freeze_pending_mention_batches,validate_mention_review_decision
+from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,assigned_mention_batch_items,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,freeze_pending_mention_batches,validate_mention_review_decision
 from pmos_research.relationship_research import discover_relationship_candidates
 
 def _mention(db):
@@ -14,7 +14,9 @@ def _mention(db):
 def test_mention_batch_manifest_detects_tampering_and_close_revokes_assignments():
     engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        _mention(db);batch=freeze_mention_review_batch(db,"admin","venture_capital");assign_mention_reviewer(db,batch.id,"maker","RESEARCHER","admin","Maker assigned to frozen mention queue");assert build_mention_review_batch_packet(db,batch.id)["manifest_valid"]
+        _mention(db);batch=freeze_mention_review_batch(db,"admin","venture_capital");
+        with pytest.raises(RelationshipMentionReviewError,match="assignment"):assigned_mention_batch_items(db,batch.id,"unassigned","RESEARCHER")
+        assign_mention_reviewer(db,batch.id,"maker","RESEARCHER","admin","Maker assigned to frozen mention queue");assert build_mention_review_batch_packet(db,batch.id)["manifest_valid"] and len(assigned_mention_batch_items(db,batch.id,"maker","RESEARCHER"))==1
         item=db.scalar(select(RelationshipMentionReviewBatchItem));item.identity_fingerprint="0"*64;db.flush();assert not build_mention_review_batch_packet(db,batch.id)["manifest_valid"]
         db.rollback()
     with factory() as db:

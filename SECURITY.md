@@ -22,6 +22,8 @@ Unresolved relationship mentions use the same maker/checker principle. `identity
 
 Mention decisions additionally require a content-addressed frozen batch and a named, unexpired assignment with the action-appropriate role. Assignment, revocation, expiry, batch closure, and decision binding are ledgered. The proposal changes the queue state and therefore cannot reuse the maker’s frozen batch for checker approval.
 
+Exact unresolved mention text and passages are not universe-wide browse data. `GET /relationship-mentions` requires the caller’s frozen batch ID and an active assignment whose reviewer identity and role match the authenticated principal. Batch preparation and staffing expose only manifest metadata, fingerprints, IDs, and counts, allowing administrators to operate the queue without receiving record text.
+
 The local ledger is SHA-256 hash-chained per decision stream and SQLite installs fail-closed triggers that reject ledger updates and deletes. `scripts/verify_audit_ledger.py` replays every reachable stream and fails on changed payloads, broken predecessor hashes, or changed event hashes. Production PostgreSQL must additionally isolate ledger insert permissions from operational roles, sign periodic roots with an external key, and export roots to independent retention.
 
 Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.
