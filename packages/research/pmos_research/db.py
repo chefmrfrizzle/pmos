@@ -3,7 +3,7 @@ import os
 from typing import Optional
 from pathlib import Path
 from datetime import datetime, timezone
-from sqlalchemy import create_engine, String, Text, Float, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, String, Text, Float, DateTime, ForeignKey, UniqueConstraint, Integer, Boolean
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 
 PRIVATE_ROOT = Path(os.getenv("PMOS_PRIVATE_ROOT", Path.home()/".local"/"share"/"pmos")).expanduser()
@@ -59,8 +59,14 @@ class Claim(Base):
     field: Mapped[str] = mapped_column(String(120), index=True)
     value: Mapped[str] = mapped_column(Text)
     source_url: Mapped[str] = mapped_column(Text)
+    source_type: Mapped[str] = mapped_column(String(50), default="official")
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     confidence: Mapped[float] = mapped_column(Float, default=0.5)
     verification_status: Mapped[str] = mapped_column(String(50), default="candidate")
+    extractor: Mapped[str] = mapped_column(String(100), default="deterministic")
+    evidence_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 class Contact(Base):
@@ -94,6 +100,49 @@ class Outcome(Base):
     outcome: Mapped[str] = mapped_column(String(50))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+class ImportBatch(Base):
+    __tablename__ = "import_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_file: Mapped[str] = mapped_column(Text)
+    source_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="running")
+    rows_seen: Mapped[int] = mapped_column(Integer, default=0)
+    rows_imported: Mapped[int] = mapped_column(Integer, default=0)
+    rows_review: Mapped[int] = mapped_column(Integer, default=0)
+    rows_support: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    __table_args__ = (UniqueConstraint("source_sha256", "source_file", name="uq_import_source_version"),)
+
+class RawImportRow(Base):
+    __tablename__ = "raw_import_rows"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("import_batches.id"), index=True)
+    source_file: Mapped[str] = mapped_column(Text)
+    sheet_name: Mapped[str] = mapped_column(String(250))
+    source_row_number: Mapped[int] = mapped_column(Integer)
+    row_hash: Mapped[str] = mapped_column(String(64), index=True)
+    original_row_json: Mapped[str] = mapped_column(Text)
+    normalized_row_json: Mapped[str] = mapped_column(Text)
+    disposition: Mapped[str] = mapped_column(String(50), index=True)
+    entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), nullable=True, index=True)
+    contact_id: Mapped[Optional[int]] = mapped_column(ForeignKey("contacts.id"), nullable=True, index=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("batch_id", "sheet_name", "source_row_number", name="uq_import_physical_row"),)
+
+class ResolutionDecision(Base):
+    __tablename__ = "resolution_decisions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    raw_row_id: Mapped[int] = mapped_column(ForeignKey("raw_import_rows.id"), index=True)
+    candidate_entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), nullable=True)
+    candidate_contact_id: Mapped[Optional[int]] = mapped_column(ForeignKey("contacts.id"), nullable=True)
+    state: Mapped[str] = mapped_column(String(40), index=True)
+    confidence: Mapped[float] = mapped_column(Float)
+    reasons_json: Mapped[str] = mapped_column(Text)
+    automatic: Mapped[bool] = mapped_column(Boolean, default=True)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 def init_db() -> None:
     PRIVATE_ROOT.mkdir(parents=True,exist_ok=True)

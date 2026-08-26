@@ -1,59 +1,130 @@
 from __future__ import annotations
+import csv, hashlib, json, re
+from datetime import datetime, timezone
 from pathlib import Path
-import csv
+from typing import Iterable, Sequence
 from openpyxl import load_workbook
-from .db import Contact, Entity
-from .entity_resolution import canonicalize_name
+from sqlalchemy import select
+from .db import Claim, Contact, Entity, Evidence, ImportBatch, RawImportRow, ResolutionDecision
+from .entity_resolution import MatchState, canonicalize_name, resolve
 
-def _val(x):
-    return "" if x is None else str(x).strip()
+IDENTITY_HEADERS={"name","contact name","contact","investor name","firm","organization","organisation","company","institution"}
+CONTACT_HEADERS={"name","contact name","contact","person","full name"}
+FIRM_HEADERS={"investor name","firm","organization","organisation","company","institution","fund name"}
+EMAIL_HEADERS={"email","email address","e-mail"}; PHONE_HEADERS={"phone","phone number","telephone","mobile"}
+TITLE_HEADERS={"title","position","position / role","role","job title"}
+COUNTRY_HEADERS={"country","jurisdiction","country / jurisdiction","hq country"}; CITY_HEADERS={"city","location","hq city","headquarters"}
+TYPE_HEADERS={"type","institution type","investor type","category","segment"}; URL_HEADERS={"website","url","official url","company website"}
+MANDATE_HEADERS={"mandate","investment focus","strategy","description","notes"}
 
-def import_csv(session, path: Path) -> int:
+def _val(value)->str:
+    if value is None:return ""
+    return str(value).strip()
+def _header(value)->str:return re.sub(r"\s+"," ",_val(value).lower()).strip(" :")
+def _json(value)->str:return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(",",":"),default=str)
+def _hash(value)->str:return hashlib.sha256(_json(value).encode()).hexdigest()
+def file_sha256(path:Path)->str:
+    digest=hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda:handle.read(1024*1024),b""):digest.update(block)
+    return digest.hexdigest()
+def detect_header(rows:Sequence[Sequence[object]])->int|None:
+    best=None
+    for index,row in enumerate(rows[:25]):
+        labels={_header(v) for v in row if _val(v)}; identity=len(labels&IDENTITY_HEADERS); score=(identity>0,identity,len(labels),-index)
+        if identity and (best is None or score>best[0]):best=(score,index)
+    return None if best is None else best[1]
+def _first(row:dict[str,str],aliases:set[str])->str:return next((row[key] for key in aliases if row.get(key)),"")
+def _source(path:Path,row_hash:str)->str:return f"private-import://{path.name}/{row_hash}"
+
+def _candidate_entity(session,name,country,url):
+    candidates=session.scalars(select(Entity).where(Entity.canonical_name==canonicalize_name(name)).limit(20)).all()
+    exact=[x for x in candidates if country and x.country and x.country.casefold()==country.casefold()]
+    if len(exact)==1:return exact[0],MatchState.EXACT,.97,("same normalized name","same jurisdiction")
+    if len(candidates)==1:
+        result=resolve({"name":name,"url":url},{"name":candidates[0].name,"url":candidates[0].official_url})
+        return candidates[0],result.state,result.confidence,result.reasons
+    if candidates:return candidates[0],MatchState.REVIEW,.45,("multiple normalized-name candidates",)
+    return None,MatchState.REVIEW,0,("no existing candidate",)
+def _candidate_contact(session,name,email):
+    if email:
+        matches=session.scalars(select(Contact).where(Contact.email.ilike(email)).limit(3)).all()
+        if len(matches)==1:return matches[0],MatchState.EXACT,.99,("same normalized email",)
+        if len(matches)>1:return matches[0],MatchState.CONFLICT,.25,("email belongs to multiple records",)
+    if name:
+        matches=session.scalars(select(Contact).where(Contact.name.ilike(name)).limit(3)).all()
+        if len(matches)==1:return matches[0],MatchState.PROBABLE,.86,("same display name","no unique email evidence")
+        if len(matches)>1:return matches[0],MatchState.REVIEW,.4,("multiple name candidates",)
+    return None,MatchState.REVIEW,0,("no existing candidate",)
+def _decision(session,raw,entity,contact,state,confidence,reasons):
+    session.add(ResolutionDecision(raw_row_id=raw.id,candidate_entity_id=getattr(entity,"id",None),candidate_contact_id=getattr(contact,"id",None),state=state.value,confidence=confidence,reasons_json=_json(list(reasons)),automatic=True))
+def _claim(session,entity,field,value,source,row_hash,confidence):
+    if value:session.add(Claim(entity_id=entity.id,field=field,value=value,source_url=source,source_type="private_import",confidence=confidence,verification_status="CANDIDATE",extractor="deterministic_private_import_v2",evidence_hash=row_hash))
+
+def _materialize(session,path,raw,row):
+    firm=_first(row,FIRM_HEADERS); name=_first(row,CONTACT_HEADERS); email=_first(row,EMAIL_HEADERS).lower()
+    phone=_first(row,PHONE_HEADERS); title=_first(row,TITLE_HEADERS); country=_first(row,COUNTRY_HEADERS); city=_first(row,CITY_HEADERS)
+    entity_type=_first(row,TYPE_HEADERS); url=_first(row,URL_HEADERS); mandate=_first(row,MANDATE_HEADERS)
+    if not firm and not name:return "support_row"
+    entity=None
+    if firm:
+        candidate,state,confidence,reasons=_candidate_entity(session,firm,country,url)
+        if state is MatchState.EXACT:entity=candidate
+        else:
+            entity=Entity(name=firm,canonical_name=canonicalize_name(firm),universe="imported_private",entity_type=entity_type or None,country=country or None,city=city or None,official_url=url or None,mandate=mandate or None,verification_status="CANDIDATE")
+            session.add(entity);session.flush()
+        raw.entity_id=entity.id; source=_source(path,raw.row_hash)
+        session.add(Evidence(entity_id=entity.id,source_url=source,source_type="private_import",content_hash=raw.row_hash,title=f"Private import row · {path.name}",confidence=.45))
+        for field,value in (("name",firm),("entity_type",entity_type),("jurisdiction",country),("city",city),("official_url",url),("mandate",mandate)):_claim(session,entity,field,value,source,raw.row_hash,.55 if field=="name" else .45)
+        _decision(session,raw,candidate,None,state,confidence,reasons)
+    if name:
+        candidate,state,confidence,reasons=_candidate_contact(session,name,email)
+        if state is MatchState.EXACT:
+            contact=candidate
+            if entity and contact.entity_id is None:contact.entity_id=entity.id
+        else:
+            contact=Contact(entity_id=getattr(entity,"id",None),name=name,title=title or None,email=email or None,phone=phone or None,source=str(path),relationship_stage="not_contacted")
+            session.add(contact);session.flush()
+        raw.contact_id=contact.id;_decision(session,raw,None,candidate,state,confidence,reasons)
+    return "imported"
+
+def _begin(session,path):
+    digest=file_sha256(path); prior=session.scalar(select(ImportBatch).where(ImportBatch.source_sha256==digest,ImportBatch.source_file==str(path)))
+    if prior:return prior,False
+    batch=ImportBatch(source_file=str(path),source_sha256=digest);session.add(batch);session.flush();return batch,True
+def _record_rows(session,path,batch,sheet,rows:Iterable[tuple[int,Sequence[object]]],header_index):
+    buffered=list(rows); header=[]
+    if header_index is not None:header=[_header(v) or f"column_{i+1}" for i,v in enumerate(buffered[header_index][1])]
     count=0
-    with path.open("r", encoding="utf-8-sig", errors="ignore", newline="") as f:
-        reader=csv.DictReader(f)
-        for row in reader:
-            lowered={str(k).strip().lower(): _val(v) for k,v in row.items() if k}
-            name=lowered.get("name") or lowered.get("contact") or lowered.get("contact name")
-            email=lowered.get("email")
-            phone=lowered.get("phone") or lowered.get("phone number")
-            if name:
-                session.add(Contact(name=name,email=email or None,phone=phone or None,source=str(path)))
-                count+=1
+    for ordinal,(physical,row_values) in enumerate(buffered):
+        values=[_val(v) for v in row_values]
+        if not any(values):continue
+        count+=1;batch.rows_seen+=1;normalized={}
+        if header_index is not None and ordinal>header_index:normalized={header[i] if i<len(header) else f"column_{i+1}":value for i,value in enumerate(values) if value}
+        disposition="header" if ordinal==header_index else "preamble" if header_index is not None and ordinal<header_index else "support_row" if header_index is None else "pending"
+        row_hash=_hash({"sheet":sheet,"row":physical,"values":values})
+        raw=RawImportRow(batch_id=batch.id,source_file=str(path),sheet_name=sheet,source_row_number=physical,row_hash=row_hash,original_row_json=_json(values),normalized_row_json=_json(normalized),disposition=disposition)
+        session.add(raw);session.flush()
+        if disposition=="pending":disposition=_materialize(session,path,raw,normalized);raw.disposition=disposition
+        if disposition=="imported":batch.rows_imported+=1
+        elif disposition=="requires_review":batch.rows_review+=1
+        else:batch.rows_support+=1
     return count
-
-def import_xlsx(session, path: Path) -> int:
-    wb=load_workbook(path, read_only=True, data_only=True)
+def import_csv(session,path:Path)->int:
+    batch,is_new=_begin(session,path)
+    if not is_new:return 0
+    try:
+        with path.open("r",encoding="utf-8-sig",errors="replace",newline="") as handle:rows=[(i,row) for i,row in enumerate(csv.reader(handle),1)]
+        count=_record_rows(session,path,batch,"CSV",rows,0 if rows else None);batch.status="completed";batch.completed_at=datetime.now(timezone.utc);return count
+    except Exception as exc:batch.status="failed";batch.error=f"{type(exc).__name__}: {exc}"[:2000];raise
+def import_xlsx(session,path:Path)->int:
+    batch,is_new=_begin(session,path)
+    if not is_new:return 0
     count=0
-    for ws in wb.worksheets:
-        rows=list(ws.iter_rows(values_only=True))
-        if not rows:
-            continue
-        # Find a likely header row in the first 15 rows.
-        header_i=None; mapping={}
-        for i,row in enumerate(rows[:15]):
-            labels=[_val(x).lower() for x in row]
-            if any(x in labels for x in ("name","investor name","contact name")) or ("email" in labels and any("name" in x for x in labels)):
-                header_i=i; mapping={label:j for j,label in enumerate(labels) if label}; break
-        if header_i is None:
-            continue
-        for row in rows[header_i+1:]:
-            def get(*keys):
-                for k in keys:
-                    if k in mapping and mapping[k] < len(row): return _val(row[mapping[k]])
-                return ""
-            contact=get("name","contact name","contact")
-            firm=get("investor name","firm","organization","company")
-            email=get("email")
-            phone=get("phone","phone number")
-            title=get("title","position / role","position")
-            if firm:
-                entity=Entity(name=firm,canonical_name=canonicalize_name(firm),universe="imported_private",verification_status="needs_verification")
-                session.add(entity); session.flush()
-                if contact:
-                    session.add(Contact(entity_id=entity.id,name=contact,title=title or None,email=email or None,phone=phone or None,source=str(path)))
-                count+=1
-            elif contact:
-                session.add(Contact(name=contact,title=title or None,email=email or None,phone=phone or None,source=str(path)))
-                count+=1
-    return count
+    try:
+        workbook=load_workbook(path,read_only=True,data_only=False)
+        for sheet in workbook.worksheets:
+            rows=[(i,tuple(row)) for i,row in enumerate(sheet.iter_rows(values_only=True),1)]
+            count+=_record_rows(session,path,batch,sheet.title,rows,detect_header([row for _,row in rows]))
+        workbook.close();batch.status="completed";batch.completed_at=datetime.now(timezone.utc);return count
+    except Exception as exc:batch.status="failed";batch.error=f"{type(exc).__name__}: {exc}"[:2000];raise

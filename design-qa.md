@@ -1,48 +1,48 @@
-# PMOS design QA
+# PMOS design QA — 2026-08-26
 
 - Source visual truth: `/tmp/pmos-audit-2026-08-25/01-mobile-command-center.png`
-- Final mobile implementation: `/tmp/pmos-design-qa/implementation-mobile-final2.png`
-- Final desktop implementation: `/tmp/pmos-design-qa/implementation-desktop-final.png`
-- Source pixels: 390 × 1884; implementation pixels: 390 × 1914
-- CSS viewport: 390 × 844 mobile, 1280 × 900 desktop
-- Device scale factor: 1; no density normalization required
-- State: command center, navigation closed, no dialog
+- Implementation: `http://127.0.0.1:3101/`
+- Implementation capture: `/tmp/pmos-qa-2026-08-26/mobile-command-center.png`
+- Landscape graph capture: `/tmp/pmos-qa-2026-08-26/relationship-landscape-graph.png`
+- Viewports: 390 × 844 portrait and 844 × 390 landscape
+- Pixels / density: source 390 × 1884 full-page; implementation viewport captures at CSS size with device scale 1. The comparable region is the first 844 pixels of the source.
+- State: public-safe synthetic demo, no private authentication or data
 
 ## Full-view comparison evidence
 
-The source and final mobile capture were inspected together at equal 390px width. The implementation preserves the source navy/ivory institutional palette, display-serif hierarchy, compact sans-serif metadata, two-column metric cards, readiness and collector panels, and horizontal relationship graph. The extra 30px height is an intentional consequence of adding public-boundary copy and a mobile Search control.
+The implementation preserves the source's editorial navy, warm paper, gold accents, serif display hierarchy, readiness card, compact evidence metrics, and high-density institutional tone. The mobile header is intentionally more compact than the source: it retains menu, Search, and Guided Demo as icon controls so the two critical actions remain reachable at 390px without clipping.
 
-The desktop capture preserves the same hierarchy with a fixed navigation rail, two-column analysis region, and a contained horizontal graph. Browser checks confirmed a 1280px viewport and 1280px document width.
+The landscape relationship view now displays a visible phone/swipe instruction, explicit left/right controls, a focusable scroll region, and partial next-node disclosure. Measured graph overflow is 1,036px inside a 768px viewport, confirming a real horizontal exploration region.
 
-## Focused comparison evidence
+## Focused region comparison evidence
 
-Focused captures inspected: `/tmp/pmos-design-qa/mobile-navigation-open.png` and `/tmp/pmos-design-qa/mobile-boundary-modal.png`. The drawer has a visible close control and dimmed scrim; the boundary modal clearly separates public and never-public content. These states did not exist in the static source and intentionally extend it.
+- Header: typography, paper tone, icon weight, control size, and title hierarchy remain coherent; the compact action treatment prevents the source capture's wider header pattern from overflowing.
+- Transaction card: spacing, navy token, readiness visualization, gold exception state, and text hierarchy match the visual system.
+- Relationship graph: node borders, connector labels, muted evidence language, and gold real-institution context remain consistent while adding discoverable mobile controls.
 
 ## Required fidelity surfaces
 
-- Typography: Playfair Display and DM Sans hierarchy, weights, wrapping, and compact uppercase metadata remain consistent with the source.
-- Spacing/layout: card spacing, panel rhythm, gutters, radii, and desktop/mobile grids are consistent. No document-level overflow remains.
-- Colors/tokens: navy, ivory, gold, supported green, and review amber preserve the source semantic system and sufficient visible contrast.
-- Image quality: the interface has no raster-image dependency. Product icons use the Phosphor icon library; no placeholder image or improvised emoji remains.
-- Copy/content: fictional transaction labeling is stronger, and real institution identity is explicitly separated from transaction involvement.
+- Fonts and typography: Playfair Display and DM Sans hierarchy remains consistent; labels, headings, and numeric emphasis wrap cleanly at both tested viewports.
+- Spacing and layout rhythm: 18px mobile gutters, card spacing, internal rules, and responsive stacking are consistent. No page-level horizontal overflow was observed.
+- Colors and visual tokens: navy, paper, gold, green, amber, and line tokens remain consistent with the source.
+- Image quality and assets: no raster imagery is required. Interface icons use the existing Phosphor icon library; no placeholder or handcrafted SVG assets were introduced.
+- Copy and content: public/private distinctions remain explicit. Orientation guidance says rotation is optional, and the guided restitution step names the exact counsel action.
 
-## Findings
+## Interaction and accessibility verification
 
-No actionable P0, P1, or P2 mismatch remains. P3: the mobile header is slightly denser than the source because Search is now intentionally available there.
+- Mobile navigation, data-boundary modal, scoring drawer, Search, guided tour, synthetic role selection, counsel acknowledgement, and relationship graph controls were exercised.
+- Guided state and counsel acknowledgement survive route transitions and reloads.
+- Keyboard focus, dialog semantics, scroll-region labeling, disabled acknowledgement state, and icon-button accessible names are covered by browser tests.
+- Browser error overlay: none.
+- Browser page errors: none.
+- Automated result: 10 Playwright scenarios passed across desktop and mobile.
 
 ## Comparison history
 
-1. P2 found: the first desktop capture had 1390px document width in a 1280px viewport; a long graph expanded the grid.
-2. Fix: added `min-width: 0` to grid children and contained the graph with horizontal overflow.
-3. Post-fix evidence: desktop document width equals 1280px; mobile document width equals 390px. Final captures were re-opened and inspected.
+- P1: Guided demo reset after route navigation and counsel acknowledgement had no durable UI state. Fixed by moving both into versioned persistent demo state and adding a contextual counsel action inside step 2. Post-fix browser test passes through reload.
+- P1: Mobile/landscape graph relied on undiscoverable overflow. Fixed with swipe guidance, arrow controls, scroll snapping, touch panning, and partial-node affordance. Post-fix measurement and browser test confirm horizontal movement.
+- P2: Mobile header actions clipped at 390px. Fixed with a three-column header and accessible compact Search/Guided Demo icon controls. Post-fix portrait capture shows both controls.
 
-## Interaction and browser evidence
-
-Six Playwright cases pass across Chromium desktop and mobile: mobile navigation, boundary modal, ranking drawer, search, institutional filtering, official-source links, keyboard focus, and Escape-to-close. The browser showed no Next.js error overlay. Loading, error, not-found, and offline routes are present.
-
-## Follow-up polish
-
-- Add a compact icon-only Search treatment below 360px if ultra-small-device support becomes necessary.
-- Run screen-reader announcements with VoiceOver in a future native-device pass.
+No actionable P0, P1, or P2 findings remain. A future P3 refinement could animate the graph-edge focus state when an arrow control is used.
 
 final result: passed
