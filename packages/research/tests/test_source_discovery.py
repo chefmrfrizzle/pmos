@@ -18,3 +18,7 @@ def test_source_discovery_is_same_domain_deterministic_and_review_only():
         assert counts["queued"]==2 and all(x.status=="PENDING_REVIEW" for x in candidates)
         assert db.scalars(select(AuditLedgerEntry)).one().action=="CANDIDATES_DISCOVERED"
         assert persist_source_candidates(db,entity,"https://official.example/",html)["existing"]==2
+
+def test_source_discovery_classifies_relationship_pages_without_creating_edges():
+    rows=discover_source_links("https://official.example/",'<a href="/partnerships">Strategic partnerships</a><a href="/portfolio-companies">Portfolio Companies</a>')
+    assert len(rows)==2 and all(x["document_type"]=="RELATIONSHIPS" and x["target_predicates"]==["relationship"] for x in rows)

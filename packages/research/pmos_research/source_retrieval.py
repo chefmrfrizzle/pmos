@@ -19,6 +19,7 @@ PREDICATE_TERMS={
     "fund_manager":("fund manager","investment manager","management company","investment adviser","investment advisor","general partner","managed by","advised by"),
     "fund_domicile":("fund domicile","domiciled in","established in","registered in","registered office","formed under the laws"),
     "address":("registered office","head office","contact us","our offices"),
+    "relationship":("partnered with","partnership with","strategic partnership","co-invested with","co-investment with","invested in","investment in","allocated to","allocation to","advises","advisor to","adviser to","manages","manager of"),
 }
 OUTCOME_STATES={
     "robots_blocked_or_unavailable":"BLOCKED_ROBOTS",

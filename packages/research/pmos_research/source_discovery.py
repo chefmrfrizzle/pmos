@@ -15,6 +15,7 @@ TRACKING_PREFIXES=("utm_","mc_")
 RULES=(
     ("REGULATORY_DISCLOSURE",("regulatory","regulation","disclosure","registration","licence","license"),("regulatory_status","legal_identity"),95),
     ("ANNUAL_REPORT",("annual report","annual-report","financial report","investor report"),("legal_status","governance","mandate","fund_manager"),90),
+    ("RELATIONSHIPS",("partnerships","partners","co-investments","co-investment","portfolio companies","investments","our portfolio"),("relationship",),85),
     ("GOVERNANCE",("governance","board","trustees","leadership","management team"),("governance",),80),
     ("FUND_STRUCTURE",("fund structure","funds","vehicles","investment vehicles","general partner","manager"),("fund_manager","fund_domicile"),75),
     ("INVESTMENT_STRATEGY",("strategy","investment approach","investment strategy","portfolio","asset classes","private markets"),("mandate",),70),

@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 from pmos_research.db import Base,Entity,EvidencePassage,RelationshipAssertion,RelationshipResearchCandidate,SourceDocument
 from pmos_research.relationship_controls import adjudicate_relationship,relationship_evidence_controls
 from pmos_research.relationship_research import adjudicate_relationship_candidate,discover_relationship_candidates
+from pmos_research.source_retrieval import extract_predicate_passages
 
 def test_deterministic_relationship_candidate_stays_review_only_and_exact_evidence_bound():
     engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
@@ -19,3 +20,7 @@ def test_relationship_discovery_rejects_name_only_mentions_without_controlled_ph
     engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
         source=Entity(name="Alpha Capital",canonical_name="alpha capital",universe="venture_capital");target=Entity(name="Beta Ventures",canonical_name="beta ventures",universe="venture_capital");db.add_all([source,target]);db.flush();text="Alpha Capital and Beta Ventures attended the conference.";digest=hashlib.sha256(text.encode()).hexdigest();document=SourceDocument(entity_id=source.id,publisher="alpha.example",publisher_independence_group="alpha.example",source_rank="S1",source_type="official_website",source_url="https://alpha.example/news",content_hash=digest);db.add(document);db.flush();db.add(EvidencePassage(document_id=document.id,passage=text,passage_hash=digest));db.flush();assert discover_relationship_candidates(db).get("queued",0)==0
+
+def test_relationship_passage_extraction_requires_controlled_phrase():
+    assert extract_predicate_passages("Alpha Capital partnered with Beta Ventures.",["relationship"])[0]["matched_term"]=="partnered with"
+    assert extract_predicate_passages("Alpha Capital met Beta Ventures.",["relationship"])==[]
