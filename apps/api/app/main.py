@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-import os, sys, uuid
+import json, os, sys, uuid
 from typing import Optional
 from contextlib import asynccontextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"packages/research"))
@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -187,6 +187,15 @@ def source_change_action(event_id:int,body:ChangeActionRequest,principal:Princip
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"pmos-api"}
+
+@app.get("/assurance/latest")
+def latest_assurance(principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"assurance:read",{"REVIEWER","COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        run=s.query(ControlAssuranceRun).order_by(ControlAssuranceRun.created_at.desc(),ControlAssuranceRun.id.desc()).first()
+        if not run:raise HTTPException(status_code=404,detail="no assurance run is available")
+        result=json.loads(run.report_json);result["run_id"]=run.id;result["report_hash"]=run.report_hash
+        audit_access(s,principal,"ASSURANCE_VIEWED",{"run_id":run.id,"status":run.status,"exception_count":run.exception_count});s.commit();return result
 
 @app.get("/entities")
 def entities(universe:Optional[str]=None, q:Optional[str]=None, limit:int=Query(100,ge=1,le=500),principal:Principal=Depends(authenticate_private_request)):

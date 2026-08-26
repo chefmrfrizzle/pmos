@@ -281,6 +281,17 @@ class ClaimCheckRoutingEvent(Base):
     rationale: Mapped[str] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class ControlAssuranceRun(Base):
+    __tablename__ = "control_assurance_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    control_count: Mapped[int] = mapped_column(Integer)
+    exception_count: Mapped[int] = mapped_column(Integer)
+    report_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    report_json: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class DiligenceCase(Base):
     __tablename__ = "diligence_cases"
     id: Mapped[int] = mapped_column(primary_key=True)
