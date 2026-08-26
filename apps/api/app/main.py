@@ -112,7 +112,7 @@ async def correlation_id(request:Request,call_next):
     return response
 
 def audit_access(session,principal:Principal,action:str,payload:dict):
-    append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,payload,principal.correlation_id)
+    append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,{**payload,"tenant_id":principal.tenant_id,"purpose":principal.active_purpose},principal.correlation_id)
 
 @app.get("/identity-review")
 def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
@@ -275,7 +275,7 @@ def _case_scope(session,case_id:int,principal:Principal,permission:str,roles:set
     if not case:raise HTTPException(status_code=404,detail="not found")
     entity=session.get(Entity,case.entity_id)
     if not entity:raise HTTPException(status_code=404,detail="not found")
-    authorize(principal,permission,roles,entity.universe);return case,entity
+    authorize(principal,permission,roles,entity.universe,case.permitted_use);return case,entity
 
 @app.get("/diligence-cases/{case_id}")
 def diligence_case(case_id:int,principal:Principal=Depends(authenticate_private_request)):

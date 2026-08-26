@@ -12,7 +12,7 @@ def test_latest_assurance_is_private_role_controlled_and_aggregate_only(monkeypa
     engine=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool);Base.metadata.create_all(engine);factory=sessionmaker(bind=engine,expire_on_commit=False)
     with factory() as db:run=persist_assurance_run(db,run_control_assurance(db));db.commit();run_id=run.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
-    reviewer=Principal("reviewer",frozenset({"REVIEWER"}),frozenset({"assurance:read"}),frozenset({"*"}),"oidc","assurance-correlation");main.app.dependency_overrides[authenticate_private_request]=lambda:reviewer
+    reviewer=Principal("reviewer",frozenset({"REVIEWER"}),frozenset({"assurance:read"}),frozenset({"*"}),"oidc","assurance-correlation","tenant-a",frozenset({"control assurance"}),"control assurance");main.app.dependency_overrides[authenticate_private_request]=lambda:reviewer
     try:
         with TestClient(main.app) as client:
             response=client.get("/assurance/latest");assert response.status_code==200

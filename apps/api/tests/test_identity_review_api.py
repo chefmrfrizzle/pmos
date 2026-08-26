@@ -20,7 +20,7 @@ def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monk
         evidence=Evidence(entity_id=candidate.id,source_url="https://source.example/about",source_type="official",content_hash="c"*64,text_excerpt="Source Capital LP official site");wrong=Evidence(entity_id=unrelated.id,source_url="https://unrelated.example",source_type="official",content_hash="d"*64)
         db.add_all([evidence,wrong]);db.commit();item_id=item.id;evidence_id=evidence.id;wrong_id=wrong.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
-    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"identity:review","identity:write"}),frozenset({"venture_capital"}),"oidc","maker-correlation")
+    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"identity:review","identity:write"}),frozenset({"venture_capital"}),"oidc","maker-correlation","tenant-a",frozenset({"identity adjudication"}),"identity adjudication")
     main.app.dependency_overrides[authenticate_private_request]=lambda:maker
     try:
         with TestClient(main.app) as client:
@@ -29,7 +29,7 @@ def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monk
             body={"action":"PROPOSE_MATCH","rationale":"Official evidence supports the proposed identity match","evidence_ids":[wrong_id],"expected_version":packet["version"]}
             assert client.post(f"/identity-review/{item_id}/actions",json=body).status_code==422
             body["evidence_ids"]=[evidence_id];proposal=client.post(f"/identity-review/{item_id}/actions",json=body);assert proposal.status_code==200
-        checker=Principal("checker",frozenset({"REVIEWER"}),frozenset({"identity:approve"}),frozenset({"venture_capital"}),"oidc","checker-correlation")
+        checker=Principal("checker",frozenset({"REVIEWER"}),frozenset({"identity:approve"}),frozenset({"venture_capital"}),"oidc","checker-correlation","tenant-a",frozenset({"identity adjudication"}),"identity adjudication")
         main.app.dependency_overrides[authenticate_private_request]=lambda:checker
         with TestClient(main.app) as client:
             response=client.post(f"/identity-review/{item_id}/actions",json={"action":"APPROVE_MATCH","rationale":"Independent review confirms the same evidence package","evidence_ids":[evidence_id],"expected_version":proposal.json()["version"]})

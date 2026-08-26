@@ -17,7 +17,7 @@ def test_change_review_api_is_universe_scoped_and_audited(monkeypatch):
         first={"status":"ok","url":candidate.source_url,"title":"Governance","text":"Governance is exercised by the Board.","hash":"a"*64};persist_retrieved_candidate(db,candidate,first);db.commit()
         second={**first,"text":"Governance is exercised by the Board and Investment Committee.","hash":"b"*64};result=persist_reverification(db,candidate,second);db.commit();event_id=result["change_event_id"]
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
-    principal=Principal("reviewer",frozenset({"REVIEWER"}),frozenset({"evidence:review","evidence:write"}),frozenset({"sovereign_wealth"}),"oidc","change-correlation");main.app.dependency_overrides[authenticate_private_request]=lambda:principal
+    principal=Principal("reviewer",frozenset({"REVIEWER"}),frozenset({"evidence:review","evidence:write"}),frozenset({"sovereign_wealth"}),"oidc","change-correlation","tenant-a",frozenset({"source reverification"}),"source reverification");main.app.dependency_overrides[authenticate_private_request]=lambda:principal
     try:
         with TestClient(main.app) as client:
             listing=client.get("/evidence-review/source-changes");assert listing.status_code==200 and listing.json()[0]["id"]==event_id

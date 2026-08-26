@@ -58,21 +58,33 @@ def _oidc_token(monkeypatch,overrides=None):
     monkeypatch.setattr(jwt,"PyJWKClient",Client)
     monkeypatch.setenv("PMOS_AUTH_MODE","oidc");monkeypatch.setenv("PMOS_OIDC_ISSUER","https://identity.example/")
     monkeypatch.setenv("PMOS_OIDC_JWKS_URL","https://identity.example/.well-known/jwks.json");monkeypatch.setenv("PMOS_OIDC_AUDIENCE","pmos-private-api")
-    now=int(time.time());claims={"iss":"https://identity.example/","sub":"user-1","aud":"pmos-private-api","iat":now,"exp":now+300,"amr":["webauthn"],"scope":"entities:read claims:read","https://pmos.example/roles":["researcher"],"https://pmos.example/universes":["venture_capital"]}
+    monkeypatch.setenv("PMOS_TENANT_ID","tenant-a")
+    now=int(time.time());claims={"iss":"https://identity.example/","sub":"user-1","aud":"pmos-private-api","iat":now,"exp":now+300,"amr":["webauthn"],"scope":"entities:read claims:read","https://pmos.example/roles":["researcher"],"https://pmos.example/universes":["venture_capital"],"https://pmos.example/tenant":"tenant-a","https://pmos.example/purposes":["counterparty research"]}
     claims.update(overrides or {})
     return jwt.encode(claims,private,algorithm="RS256",headers={"kid":"test"})
 
 def test_oidc_validates_signature_issuer_audience_mfa_roles_and_scope(monkeypatch):
     token=_oidc_token(monkeypatch)
-    principal=authenticate_private_request(request(),"Bearer "+token,None)
-    assert principal.subject=="user-1" and principal.roles==frozenset({"RESEARCHER"})
+    principal=authenticate_private_request(request(),"Bearer "+token,None,"counterparty research")
+    assert principal.subject=="user-1" and principal.roles==frozenset({"RESEARCHER"}) and principal.tenant_id=="tenant-a" and principal.active_purpose=="counterparty research"
     authorize(principal,"entities:read",{"RESEARCHER"},"venture_capital")
     with pytest.raises(HTTPException):authorize(principal,"entities:read",{"RESEARCHER"},"private_equity")
     with pytest.raises(HTTPException):authorize(principal,"entities:write",{"RESEARCHER"},"venture_capital")
+    with pytest.raises(HTTPException):authorize(principal,"entities:read",{"RESEARCHER"},"venture_capital","different purpose")
+
+def test_oidc_rejects_cross_tenant_missing_or_unauthorized_purpose(monkeypatch):
+    rate_limiter.reset();token=_oidc_token(monkeypatch)
+    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None,None)
+    assert error.value.status_code==403
+    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None,"external marketing")
+    assert error.value.status_code==403
+    token=_oidc_token(monkeypatch,{"https://pmos.example/tenant":"tenant-b"})
+    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None,"counterparty research")
+    assert error.value.status_code==403
 
 def test_oidc_rejects_tokens_without_mfa_or_authorized_role(monkeypatch):
     token=_oidc_token(monkeypatch,{"amr":["pwd"]})
-    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None)
+    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None,"counterparty research")
     assert error.value.status_code==403
 
 def test_api_enforces_object_scope_and_permissions(monkeypatch):
@@ -83,7 +95,7 @@ def test_api_enforces_object_scope_and_permissions(monkeypatch):
         pe=Entity(name="PE Example",canonical_name="pe example",universe="private_equity")
         db.add_all([vc,pe]);db.commit();vc_id=vc.id;pe_id=pe.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
-    principal=Principal("user-1",frozenset({"RESEARCHER"}),frozenset({"entities:read"}),frozenset({"venture_capital"}),"oidc","test-correlation")
+    principal=Principal("user-1",frozenset({"RESEARCHER"}),frozenset({"entities:read"}),frozenset({"venture_capital"}),"oidc","test-correlation","tenant-a",frozenset({"counterparty research"}),"counterparty research")
     main.app.dependency_overrides[authenticate_private_request]=lambda:principal
     try:
         with TestClient(main.app) as client:
@@ -93,7 +105,7 @@ def test_api_enforces_object_scope_and_permissions(monkeypatch):
             assert client.get(f"/entities/{vc_id}/claims").status_code==403
     finally:main.app.dependency_overrides.clear()
     token=_oidc_token(monkeypatch,{"https://pmos.example/roles":["unknown" ]})
-    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None)
+    with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None,"counterparty research")
     assert error.value.status_code==403
 
 def test_authenticated_case_check_workflow_enforces_maker_checker(monkeypatch):
@@ -106,7 +118,10 @@ def test_authenticated_case_check_workflow_enforces_maker_checker(monkeypatch):
         passage=EvidencePassage(document_id=document.id,section="record",passage="legal identity",passage_hash="2"*64);db.add(passage);db.flush()
         claim=Claim(entity_id=entity.id,field="legal_name",value=entity.name,source_url=document.source_url,source_type="registry",confidence=1,verification_status="SUPPORTED",extractor="test",evidence_hash=document.content_hash);db.add(claim);db.flush();db.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=1,supports=True));db.commit();case_id=case.id;check_id=check.id;claim_id=claim.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
-    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"checks:read","checks:write","dossiers:read"}),frozenset({"venture_capital"}),"oidc","maker-request")
+    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"checks:read","checks:write","dossiers:read"}),frozenset({"venture_capital"}),"oidc","maker-request","tenant-a",frozenset({"internal"}),"internal")
+    wrong_purpose=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"checks:read","dossiers:read"}),frozenset({"venture_capital"}),"oidc","wrong-purpose","tenant-a",frozenset({"external marketing"}),"external marketing")
+    main.app.dependency_overrides[authenticate_private_request]=lambda:wrong_purpose
+    with TestClient(main.app) as client:assert client.get(f"/diligence-cases/{case_id}/dossier").status_code==403
     main.app.dependency_overrides[authenticate_private_request]=lambda:maker
     try:
         with TestClient(main.app) as client:
@@ -116,7 +131,7 @@ def test_authenticated_case_check_workflow_enforces_maker_checker(monkeypatch):
             response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/evidence",json={"claim_ids":[claim_id],"rationale":"Attach dispositive registry evidence"});assert response.status_code==200
             response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"PROPOSE_COMPLETE","rationale":"Registry evidence directly establishes identity","expected_status":"EVIDENCE_COLLECTED"});assert response.status_code==200
             assert client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"APPROVE","rationale":"Attempt unauthorized approval","expected_status":"REVIEW_PROPOSED"}).status_code==403
-        checker=Principal("checker",frozenset({"REVIEWER"}),frozenset({"checks:read","checks:approve"}),frozenset({"venture_capital"}),"oidc","checker-request")
+        checker=Principal("checker",frozenset({"REVIEWER"}),frozenset({"checks:read","checks:approve"}),frozenset({"venture_capital"}),"oidc","checker-request","tenant-a",frozenset({"internal"}),"internal")
         main.app.dependency_overrides[authenticate_private_request]=lambda:checker
         with TestClient(main.app) as client:
             response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"APPROVE","rationale":"Independent reviewer confirms source and scope","expected_status":"REVIEW_PROPOSED"});assert response.status_code==200 and response.json()["status"]=="SPECIALIST_VERIFIED"
