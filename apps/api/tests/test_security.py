@@ -46,6 +46,8 @@ def test_api_rejects_untrusted_hosts_large_bodies_and_sets_security_headers(monk
     with TestClient(main.app) as client:
         response=client.get("/health");assert response.status_code==200
         assert response.headers["x-content-type-options"]=="nosniff" and response.headers["cache-control"]=="no-store"
+        safe=client.get("/health",headers={"x-request-id":"case-review_123"});assert safe.headers["x-request-id"]=="case-review_123"
+        unsafe=client.get("/health",headers={"x-request-id":"bad ledger value"});assert unsafe.headers["x-request-id"]!="bad ledger value" and len(unsafe.headers["x-request-id"])==36
         assert client.get("/health",headers={"host":"attacker.example"}).status_code==400
         assert client.post("/missing",content=b"x"*1_048_577).status_code==413
 
@@ -59,7 +61,7 @@ def _oidc_token(monkeypatch,overrides=None):
     monkeypatch.setenv("PMOS_AUTH_MODE","oidc");monkeypatch.setenv("PMOS_OIDC_ISSUER","https://identity.example/")
     monkeypatch.setenv("PMOS_OIDC_JWKS_URL","https://identity.example/.well-known/jwks.json");monkeypatch.setenv("PMOS_OIDC_AUDIENCE","pmos-private-api")
     monkeypatch.setenv("PMOS_TENANT_ID","tenant-a")
-    now=int(time.time());claims={"iss":"https://identity.example/","sub":"user-1","aud":"pmos-private-api","iat":now,"exp":now+300,"amr":["webauthn"],"scope":"entities:read claims:read","https://pmos.example/roles":["researcher"],"https://pmos.example/universes":["venture_capital"],"https://pmos.example/tenant":"tenant-a","https://pmos.example/purposes":["counterparty research"]}
+    now=int(time.time());claims={"iss":"https://identity.example/","sub":"user-1","aud":"pmos-private-api","iat":now,"exp":now+300,"auth_time":now,"jti":"test-token-instance-0001","amr":["webauthn"],"scope":"entities:read claims:read","https://pmos.example/roles":["researcher"],"https://pmos.example/universes":["venture_capital"],"https://pmos.example/tenant":"tenant-a","https://pmos.example/purposes":["counterparty research"]}
     claims.update(overrides or {})
     return jwt.encode(claims,private,algorithm="RS256",headers={"kid":"test"})
 
@@ -86,6 +88,15 @@ def test_oidc_rejects_tokens_without_mfa_or_authorized_role(monkeypatch):
     token=_oidc_token(monkeypatch,{"amr":["pwd"]})
     with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None,"counterparty research")
     assert error.value.status_code==403
+
+def test_oidc_rejects_long_lived_stale_and_revoked_token_instances(monkeypatch):
+    import hashlib
+    now=int(time.time())
+    with pytest.raises(HTTPException):authenticate_private_request(request(),"Bearer "+_oidc_token(monkeypatch,{"exp":now+7200}),None,"counterparty research")
+    with pytest.raises(HTTPException):authenticate_private_request(request(),"Bearer "+_oidc_token(monkeypatch,{"iat":now-1000,"exp":now+100}),None,"counterparty research")
+    with pytest.raises(HTTPException):authenticate_private_request(request(),"Bearer "+_oidc_token(monkeypatch,{"auth_time":now-90000}),None,"counterparty research")
+    monkeypatch.setenv("PMOS_REVOKED_JTI_HASHES",hashlib.sha256(b"test-token-instance-0001").hexdigest())
+    with pytest.raises(HTTPException):authenticate_private_request(request(),"Bearer "+_oidc_token(monkeypatch),None,"counterparty research")
 
 def test_api_enforces_object_scope_and_permissions(monkeypatch):
     import apps.api.app.main as main

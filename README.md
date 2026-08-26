@@ -104,7 +104,7 @@ Open:
 
 Private entity routes are absent by default (`PMOS_AUTH_MODE=disabled`). Local development uses `PMOS_AUTH_MODE=local` plus a random `PMOS_DEV_API_TOKEN` of at least 24 characters and accepts loopback clients only.
 
-Institutional deployments use `PMOS_AUTH_MODE=oidc` with `PMOS_OIDC_ISSUER`, `PMOS_OIDC_AUDIENCE`, and a same-issuer HTTPS `PMOS_OIDC_JWKS_URL`. The API requires signed RS256 access tokens, MFA evidence, an approved PMOS role, action permissions, and universe-level object scope. Browser session/CSRF integration and an enterprise identity-provider configuration remain deployment-specific; the public Vercel demo contains no private API.
+Institutional deployments use `PMOS_AUTH_MODE=oidc` with `PMOS_OIDC_ISSUER`, `PMOS_OIDC_AUDIENCE`, and a same-issuer HTTPS `PMOS_OIDC_JWKS_URL`. The API requires short-lived signed RS256 access tokens with MFA, recent `auth_time`, unique `jti`, an approved PMOS role, action permissions, tenant/purpose binding, and universe-level object scope. Emergency revocation uses hashed token identifiers in private deployment configuration. Browser session/CSRF integration and enterprise IdP session revocation remain deployment-specific; the public Vercel demo contains no private API.
 
 ### Import your private databases
 

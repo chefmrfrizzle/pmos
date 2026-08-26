@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-import json, os, sys, uuid
+import json, os, re, sys, uuid
 from typing import Optional
 from contextlib import asynccontextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"packages/research"))
@@ -106,13 +106,13 @@ app.add_middleware(BodySizeLimitMiddleware,max_bytes=_request_limit())
 
 @app.middleware("http")
 async def correlation_id(request:Request,call_next):
-    request.state.correlation_id=request.headers.get("x-request-id") or str(uuid.uuid4())
+    supplied=request.headers.get("x-request-id","");request.state.correlation_id=supplied if re.fullmatch(r"[A-Za-z0-9._:-]{1,100}",supplied) else str(uuid.uuid4())
     response=await call_next(request)
     response.headers.update({"X-Request-ID":request.state.correlation_id,"Cache-Control":"no-store","X-Content-Type-Options":"nosniff","X-Frame-Options":"DENY","Referrer-Policy":"no-referrer","Permissions-Policy":"camera=(), microphone=(), geolocation=(), payment=()","Content-Security-Policy":"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"})
     return response
 
 def audit_access(session,principal:Principal,action:str,payload:dict):
-    append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,{**payload,"tenant_id":principal.tenant_id,"purpose":principal.active_purpose},principal.correlation_id)
+    append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,{**payload,"tenant_id":principal.tenant_id,"purpose":principal.active_purpose,"token_id_hash":principal.token_id_hash},principal.correlation_id)
 
 @app.get("/identity-review")
 def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):

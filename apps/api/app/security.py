@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import os
 import secrets
@@ -45,6 +46,7 @@ class Principal:
     tenant_id:str
     purposes:frozenset[str]
     active_purpose:str
+    token_id_hash:str|None=None
 
 def _claim_set(value)->frozenset[str]:
     if isinstance(value,str):return frozenset(x for x in value.replace(","," ").split() if x)
@@ -71,8 +73,17 @@ def _oidc_principal(request:Request,authorization:str|None,purpose:str|None)->Pr
     try:
         import jwt
         key=jwt.PyJWKClient(jwks_url,cache_keys=True,cache_jwk_set=True,lifespan=300,timeout=5).get_signing_key_from_jwt(token)
-        claims=jwt.decode(token,key.key,algorithms=["RS256"],audience=audience,issuer=issuer,leeway=30,options={"require":["exp","iat","sub","aud","iss"]})
+        claims=jwt.decode(token,key.key,algorithms=["RS256"],audience=audience,issuer=issuer,leeway=30,options={"require":["exp","iat","sub","aud","iss","jti","auth_time"]})
     except Exception:raise HTTPException(status_code=401,detail="invalid access token")
+    try:max_token_age=max(60,min(int(os.getenv("PMOS_MAX_TOKEN_AGE_SECONDS","900")),3600));max_auth_age=max(300,min(int(os.getenv("PMOS_MAX_AUTH_AGE_SECONDS","43200")),86400));now=int(time.time());issued=int(claims["iat"]);expires=int(claims["exp"]);authenticated=int(claims["auth_time"])
+    except (TypeError,ValueError):raise HTTPException(status_code=503,detail="OIDC security timing configuration or claims are invalid")
+    if issued>now+30 or expires<=issued or expires-issued>max_token_age+30 or now-issued>max_token_age+30:raise HTTPException(status_code=401,detail="access token lifetime is not authorized")
+    if authenticated>now+30 or now-authenticated>max_auth_age+30:raise HTTPException(status_code=403,detail="recent multi-factor authentication required")
+    jti=str(claims.get("jti","")).strip()
+    if len(jti)<16 or len(jti)>256:raise HTTPException(status_code=401,detail="invalid access token identifier")
+    jti_hash=hashlib.sha256(jti.encode()).hexdigest();configured_revocations=[x.strip().casefold() for x in os.getenv("PMOS_REVOKED_JTI_HASHES","").split(",") if x.strip()]
+    if any(len(x)!=64 or any(c not in "0123456789abcdef" for c in x) for x in configured_revocations):raise HTTPException(status_code=503,detail="token revocation configuration is invalid")
+    if any(secrets.compare_digest(jti_hash,x) for x in configured_revocations):raise HTTPException(status_code=401,detail="access token has been revoked")
     roles_claim=os.getenv("PMOS_OIDC_ROLES_CLAIM","https://pmos.example/roles")
     universes_claim=os.getenv("PMOS_OIDC_UNIVERSES_CLAIM","https://pmos.example/universes")
     tenant_claim=os.getenv("PMOS_OIDC_TENANT_CLAIM","https://pmos.example/tenant")
@@ -89,7 +100,7 @@ def _oidc_principal(request:Request,authorization:str|None,purpose:str|None)->Pr
     if not configured_tenant or not token_tenant or not secrets.compare_digest(configured_tenant,token_tenant):raise HTTPException(status_code=403,detail="tenant scope is not authorized")
     normalized_purpose=" ".join(active_purpose.casefold().split());normalized_allowed={" ".join(x.casefold().split()) for x in purposes}
     if len(active_purpose)<3 or len(active_purpose)>500 or ("*" not in purposes and normalized_purpose not in normalized_allowed):raise HTTPException(status_code=403,detail="declared purpose is not authorized")
-    return Principal(str(claims["sub"]),roles,permissions,universes,"oidc",request.state.correlation_id,token_tenant,purposes,active_purpose)
+    return Principal(str(claims["sub"]),roles,permissions,universes,"oidc",request.state.correlation_id,token_tenant,purposes,active_purpose,jti_hash)
 
 def authenticate_private_request(request:Request,authorization:Optional[str]=Header(default=None),x_pmos_token:Optional[str]=Header(default=None),x_pmos_purpose:Optional[str]=Header(default=None))->Principal:
     purpose=x_pmos_purpose if isinstance(x_pmos_purpose,str) else None
