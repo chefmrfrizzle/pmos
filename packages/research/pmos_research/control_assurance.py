@@ -10,7 +10,7 @@ from .case_checks import evidence_sufficiency
 from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
-    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
+    EvidencePassage,EvidenceReviewBatch,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
@@ -18,6 +18,7 @@ from .db import (
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
+from .evidence_review_batch import build_batch_packet
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -39,6 +40,7 @@ def run_control_assurance(session)->dict:
 
     passages=session.scalars(select(EvidencePassage)).all();controls.append(_control("evidence_passage_hash_integrity",len(passages),sum(hashlib.sha256(x.passage.encode()).hexdigest()!=x.passage_hash for x in passages)))
     snapshots=session.scalars(select(ResearchDocumentSnapshot)).all();controls.append(_control("research_snapshot_hash_integrity",len(snapshots),sum(hashlib.sha256(x.normalized_text.encode()).hexdigest()!=x.text_hash for x in snapshots)))
+    batches=session.scalars(select(EvidenceReviewBatch)).all();controls.append(_control("frozen_evidence_review_batch_manifest_integrity",len(batches),sum(not build_batch_packet(session,x.id)["manifest_valid"] for x in batches)))
 
     coverage_runs=session.scalars(select(UniverseCoverageRun)).all();bad=0
     for run in coverage_runs:

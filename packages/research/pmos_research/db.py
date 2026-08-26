@@ -271,6 +271,28 @@ class ResearchPassageAdjudicationEvent(Base):
     resulting_claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class EvidenceReviewBatch(Base):
+    __tablename__ = "evidence_review_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), default="FROZEN", index=True)
+    criteria_json: Mapped[str] = mapped_column(Text)
+    manifest_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    item_count: Mapped[int] = mapped_column(Integer)
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class EvidenceReviewBatchItem(Base):
+    __tablename__ = "evidence_review_batch_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_batches.id"), index=True)
+    passage_candidate_id: Mapped[int] = mapped_column(ForeignKey("research_passage_candidates.id"), index=True)
+    candidate_status: Mapped[str] = mapped_column(String(40))
+    predicate: Mapped[str] = mapped_column(String(120))
+    passage_hash: Mapped[str] = mapped_column(String(64))
+    document_hash: Mapped[str] = mapped_column(String(64))
+    evidence_state: Mapped[str] = mapped_column(String(30))
+    __table_args__ = (UniqueConstraint("batch_id", "passage_candidate_id", name="uq_batch_passage_candidate"),)
+
 class ClaimCheckRoutingCandidate(Base):
     __tablename__ = "claim_check_routing_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)

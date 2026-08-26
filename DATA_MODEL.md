@@ -10,6 +10,8 @@ Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `
 
 `JurisdictionReviewCase` preserves an invalid original country value and tracks a proposed ISO alpha-2 correction without rewriting the entity. `PROPOSE_CORRECTION` requires a qualifying evidence-hashed country, jurisdiction, or domicile claim for the same entity. `APPROVE_CORRECTION` requires a different reviewer; only that transition updates the entity. `JurisdictionReviewEvent` retains the full decision history.
 
+`EvidenceReviewBatch` freezes a specialist queue selection into a deterministic manifest hash. Its items preserve the candidate status, predicate, passage hash, source-document hash, and eligibility state observed at assignment time. The batch never copies raw private rows and never promotes a claim. Manifest integrity is independently recalculated by the API and control-assurance job.
+
 `IdentityCluster` and `IdentityMembership` represent proposed, accepted, or rejected canonicalization without deleting source entities. `EntityAlias` retains sourced names. Institutional structures distinguish legal entities and vehicles and preserve metric type, currency, basis, and date rather than collapsing AUM, AUA, NAV, commitments, target close, and final close.
 
 An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.

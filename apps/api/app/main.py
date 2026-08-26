@@ -27,6 +27,7 @@ from pmos_research.relationship_review import build_relationship_packet
 from pmos_research.private_sale import PrivateSaleError,adjudicate_gate,open_private_sale,submit_gate_evidence
 from pmos_research.private_sale_review import build_private_sale_packet
 from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate_jurisdiction,build_jurisdiction_packet
+from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_batch_packet,freeze_review_batch
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -81,6 +82,13 @@ class PassageActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     claim_value:Optional[str]=Field(default=None,max_length=1000)
     expected_status:str=Field(min_length=5,max_length=40)
+
+class EvidenceBatchRequest(BaseModel):
+    universe:str=Field(min_length=1,max_length=100)
+    status:str=Field(default="HUMAN_REVIEW_REQUIRED",min_length=5,max_length=40)
+    predicate:Optional[str]=Field(default=None,max_length=120)
+    min_confidence:float=Field(default=0,ge=0,le=1)
+    limit:int=Field(default=50,ge=1,le=100)
 
 class RoutingActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=20)
@@ -302,6 +310,21 @@ def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",predicate:Optional[s
             if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
             if len(rows)>=limit:break
         audit_access(s,principal,"PASSAGE_REVIEW_LISTED",{"status":status.upper(),"predicate":predicate.casefold() if predicate else None,"min_confidence":min_confidence,"evidence_state":normalized_state,"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/evidence-review/batches")
+def evidence_review_batch_create(body:EvidenceBatchRequest,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"evidence:review",{"REVIEWER","COUNSEL","ADMIN"},body.universe)
+    with SessionLocal() as s:
+        try:batch=freeze_review_batch(s,principal.subject,body.universe,body.status,body.predicate,body.min_confidence,body.limit)
+        except EvidenceReviewBatchError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_batch_packet(s,batch.id);audit_access(s,principal,"EVIDENCE_REVIEW_BATCH_FROZEN",{"batch_id":batch.id,"universe":body.universe,"manifest_hash":batch.manifest_hash,"item_count":batch.item_count});s.commit();return packet
+
+@app.get("/evidence-review/batches/{batch_id}")
+def evidence_review_batch_detail(batch_id:int,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        try:packet=build_batch_packet(s,batch_id)
+        except EvidenceReviewBatchError as exc:raise HTTPException(status_code=404,detail=str(exc))
+        authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["criteria"]["universe"]);audit_access(s,principal,"EVIDENCE_REVIEW_BATCH_READ",{"batch_id":batch_id,"manifest_hash":packet["manifest_hash"],"manifest_valid":packet["manifest_valid"]});s.commit();return packet
 
 @app.post("/evidence-review/passages/{candidate_id}/actions")
 def passage_review_action(candidate_id:int,body:PassageActionRequest,principal:Principal=Depends(authenticate_private_request)):
