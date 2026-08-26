@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -59,6 +59,12 @@ def run_control_assurance(session)->dict:
         except Exception:valid_status=False
         bad+=hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or not valid_status
     controls.append(_control("universe_coverage_report_integrity",len(coverage_runs),bad))
+    readiness_runs=session.scalars(select(SecurityReadinessRun)).all();bad=0
+    for run in readiness_runs:
+        try:parsed=json.loads(run.report_json);valid_status=parsed.get("status")==run.status and parsed.get("classification")=="PMOS PRIVATE AGGREGATE SECURITY READINESS — NO RECORD VALUES"
+        except Exception:valid_status=False
+        bad+=hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or not valid_status
+    controls.append(_control("security_readiness_report_integrity",len(readiness_runs),bad))
 
     attempts=session.scalars(select(SourceRetrievalAttempt).order_by(SourceRetrievalAttempt.source_candidate_id,SourceRetrievalAttempt.attempt_number)).all();grouped={};bad=0
     for attempt in attempts:grouped.setdefault(attempt.source_candidate_id,[]).append(attempt)

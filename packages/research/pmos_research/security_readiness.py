@@ -1,0 +1,35 @@
+from __future__ import annotations
+
+import hashlib,json,os
+from datetime import datetime,timedelta,timezone
+from pathlib import Path
+from urllib.parse import urlparse
+from sqlalchemy import func,select
+
+from .audit_ledger import append_ledger_event,verify_ledger
+from .db import ControlAssuranceRun,EvidenceReviewAssignment,IdentityReviewAssignment,PrivateSaleCase,RelationshipAssertion,SecurityReadinessRun
+
+def _control(control,status,evidence,limitation):return {"control":control,"status":status,"evidence":evidence,"limitation":limitation}
+def _aware(value):return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+def build_security_readiness(session,repo_root:Path,technical:dict,environment:dict|None=None,backup_verified:bool=False)->dict:
+    env=environment or dict(os.environ);now=datetime.now(timezone.utc);controls=[]
+    repo=repo_root.resolve();db_path=Path(session.bind.url.database).resolve() if session.bind.url.database and session.bind.url.database!=":memory:" else None
+    controls.append(_control("private_datastore_outside_public_repo","PROVEN" if db_path and repo not in db_path.parents else "FAIL",{"path_exposure":False},"File location only; host access controls remain separate."))
+    controls.append(_control("public_release_safety","PROVEN" if technical.get("public_release_check") else "FAIL",{"gate_passed":bool(technical.get("public_release_check"))},"Proves the scanned Git history/worktree/client bundle at this run."))
+    controls.append(_control("backend_security_tests","PROVEN" if technical.get("backend_tests") else "FAIL",{"gate_passed":bool(technical.get("backend_tests"))},"Test evidence is not live operating evidence."))
+    controls.append(_control("public_web_build_and_browser_flows","PROVEN" if technical.get("web_build") and technical.get("browser_tests") else "FAIL",{"build_passed":bool(technical.get("web_build")),"browser_tests_passed":bool(technical.get("browser_tests"))},"Does not prove private API production deployment."))
+    ledger=verify_ledger(session);controls.append(_control("append_only_audit_ledger","PROVEN" if ledger["valid"] else "FAIL",{"valid":ledger["valid"],"entries":ledger["entries"]},"SQLite trigger and hash-chain evidence; external immutable log retention remains unevidenced."))
+    assurance=session.scalar(select(ControlAssuranceRun).order_by(ControlAssuranceRun.id.desc()));assurance_fresh=bool(assurance and assurance.status=="PASS" and _aware(assurance.created_at)>=now-timedelta(hours=24));controls.append(_control("private_control_assurance","PROVEN" if assurance_fresh else "FAIL",{"fresh_pass":assurance_fresh,"control_count":assurance.control_count if assurance else 0,"exception_count":assurance.exception_count if assurance else None},"Zero-population controls are design evidence, not exercised operating evidence."))
+    controls.append(_control("verified_encrypted_backup","PROVEN" if backup_verified else "NOT_EVIDENCED",{"latest_backup_verified":backup_verified},"A backup is not a recovery drill."))
+    auth_mode=env.get("PMOS_AUTH_MODE","disabled").casefold();issuer=env.get("PMOS_OIDC_ISSUER","");jwks=env.get("PMOS_OIDC_JWKS_URL","");aud=env.get("PMOS_OIDC_AUDIENCE","");tenant=env.get("PMOS_TENANT_ID","");oidc=auth_mode=="oidc" and urlparse(issuer).scheme=="https" and urlparse(jwks).scheme=="https" and urlparse(issuer).hostname==urlparse(jwks).hostname and bool(aud and tenant);controls.append(_control("production_oidc_mfa_tenant_configuration","CONFIGURED" if oidc else "NOT_CONFIGURED",{"auth_mode":auth_mode,"oidc_complete":oidc},"Configuration presence does not prove IdP policy or successful MFA integration testing."))
+    exact_hosts=bool(env.get("PMOS_ALLOWED_HOSTS",""));controls.append(_control("private_api_network_edge","CONFIGURED" if exact_hosts and oidc else "NOT_CONFIGURED",{"exact_allowed_hosts":exact_hosts,"oidc_enabled":oidc},"Gateway WAF, distributed rate limiting, TLS termination, and egress isolation are not evidenced locally."))
+    active_evidence=session.scalar(select(func.count()).select_from(EvidenceReviewAssignment).where(EvidenceReviewAssignment.status=="ACTIVE")) or 0;active_identity=session.scalar(select(func.count()).select_from(IdentityReviewAssignment).where(IdentityReviewAssignment.status=="ACTIVE")) or 0;controls.append(_control("reviewer_operating_assignments","OPERATING" if active_evidence+active_identity else "NOT_STAFFED",{"active_evidence_assignments":active_evidence,"active_identity_assignments":active_identity},"Named authorized human reviewers are required before adjudication."))
+    verified_relationships=session.scalar(select(func.count()).select_from(RelationshipAssertion).where(RelationshipAssertion.status=="SPECIALIST_VERIFIED")) or 0;private_sales=session.scalar(select(func.count()).select_from(PrivateSaleCase)) or 0;controls.append(_control("transaction_workflow_operating_evidence","OPERATING" if verified_relationships and private_sales else "NOT_EXERCISED",{"verified_relationships":verified_relationships,"private_sale_cases":private_sales},"Synthetic UI flows do not prove private operating procedures."))
+    for name in ("external_security_review","restore_drill","retention_and_deletion","monitoring_and_incident_response","gateway_rate_limit_and_waf"):
+        controls.append(_control(name,"NOT_EVIDENCED",{},"Requires dated external or operational evidence; no self-attestation is accepted."))
+    blocking={"FAIL","NOT_CONFIGURED","NOT_STAFFED","NOT_EXERCISED","NOT_EVIDENCED"};status="PRODUCTION_READY" if all(x["status"] not in blocking for x in controls) else "NOT_PRODUCTION_READY"
+    return {"classification":"PMOS PRIVATE AGGREGATE SECURITY READINESS — NO RECORD VALUES","generated_at":now.isoformat(),"status":status,"method":"fail_closed_v1","controls":controls,"summary":{state:sum(x["status"]==state for x in controls) for state in sorted({x["status"] for x in controls})}}
+
+def persist_security_readiness(session,report:dict,actor:str="security-readiness-worker")->SecurityReadinessRun:
+    canonical=json.dumps(report,sort_keys=True,separators=(",",":"),ensure_ascii=False);digest=hashlib.sha256(canonical.encode()).hexdigest();run=SecurityReadinessRun(status=report["status"],report_hash=digest,report_json=canonical,actor=actor);session.add(run);session.flush();append_ledger_event(session,"SECURITY_READINESS",run.id,actor,"SYSTEM","READINESS_RECORDED",{"status":run.status,"report_hash":digest,"summary":report["summary"]});return run

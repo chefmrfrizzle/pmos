@@ -434,6 +434,15 @@ class UniverseCoverageRun(Base):
     actor: Mapped[str] = mapped_column(String(150))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class SecurityReadinessRun(Base):
+    __tablename__ = "security_readiness_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    report_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    report_json: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class ExportRequest(Base):
     __tablename__ = "export_requests"
     id: Mapped[int] = mapped_column(primary_key=True)

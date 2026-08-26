@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -196,6 +196,15 @@ def universe_coverage_latest(principal:Principal=Depends(authenticate_private_re
         run=s.scalar(select(UniverseCoverageRun).order_by(UniverseCoverageRun.id.desc()))
         if not run:raise HTTPException(status_code=404,detail="no coverage assessment is available")
         report=json.loads(run.report_json);audit_access(s,principal,"UNIVERSE_COVERAGE_READ",{"coverage_run_id":run.id,"report_hash":run.report_hash,"status":run.status});s.commit();return report
+
+@app.get("/security-readiness")
+def security_readiness_latest(principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"security:read",{"ADMIN"})
+    if "*" not in principal.universes:raise HTTPException(status_code=403,detail="security readiness requires all-universe scope")
+    with SessionLocal() as s:
+        run=s.scalar(select(SecurityReadinessRun).order_by(SecurityReadinessRun.id.desc()))
+        if not run:raise HTTPException(status_code=404,detail="no security readiness assessment is available")
+        report=json.loads(run.report_json);audit_access(s,principal,"SECURITY_READINESS_READ",{"readiness_run_id":run.id,"report_hash":run.report_hash,"status":run.status});s.commit();return report
 
 @app.get("/identity-review")
 def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
