@@ -5,6 +5,7 @@ import re,secrets
 from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
+from .evidence_routing import queue_claim_routes
 from .db import (
     Claim,ClaimEvidence,ConflictCase,ConflictMember,EvidencePassage,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
@@ -54,7 +55,7 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
     if action not in transitions.get(prior,{}):raise PassageAdjudicationError(f"invalid transition {prior} -> {action}")
     value=_validate_value(passage.passage,claim_value or "") if action in {"PROPOSE_SUPPORT","APPROVE_SUPPORT","MARK_CONFLICT"} else None
     events=session.scalars(select(ResearchPassageAdjudicationEvent).where(ResearchPassageAdjudicationEvent.passage_candidate_id==candidate.id).order_by(ResearchPassageAdjudicationEvent.id)).all()
-    result=transitions[prior][action];claim=None
+    result=transitions[prior][action];claim=None;route_ids=[]
     conflicts=_material_conflicts(session,source.entity_id,candidate.predicate,value) if value else []
     if action=="PROPOSE_SUPPORT" and conflicts:raise PassageAdjudicationError("material contradiction detected; mark conflict instead of proposing support")
     if action=="APPROVE_SUPPORT":
@@ -63,6 +64,7 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
         if not secrets.compare_digest(_normalized(proposal.claim_value or ""),_normalized(value)):raise PassageAdjudicationError("approval must use the exact proposed claim value")
         if conflicts:raise PassageAdjudicationError("material contradiction appeared after proposal; mark conflict")
         claim=_create_claim(session,candidate,source,passage,document,value,"SUPPORTED")
+        route_ids=queue_claim_routes(session,claim,candidate.id)
     elif action=="MARK_CONFLICT":
         claim=_create_claim(session,candidate,source,passage,document,value,"CONFLICT")
         conflict=session.scalar(select(ConflictCase).where(ConflictCase.entity_id==source.entity_id,ConflictCase.predicate==candidate.predicate,ConflictCase.status!="RESOLVED").order_by(ConflictCase.id.desc()))
@@ -74,4 +76,4 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
     candidate.status=result
     event=ResearchPassageAdjudicationEvent(passage_candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale.strip(),claim_value=value,resulting_claim_id=claim.id if claim else None);session.add(event)
     append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,"REVIEWER",action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":__import__("hashlib").sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"rationale":rationale.strip()})
-    session.flush();return {"candidate_id":candidate.id,"prior_state":prior,"resulting_state":result,"claim_id":claim.id if claim else None}
+    session.flush();return {"candidate_id":candidate.id,"prior_state":prior,"resulting_state":result,"claim_id":claim.id if claim else None,"routing_candidate_ids":route_ids}

@@ -233,6 +233,29 @@ class ResearchPassageAdjudicationEvent(Base):
     resulting_claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class ClaimCheckRoutingCandidate(Base):
+    __tablename__ = "claim_check_routing_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), index=True)
+    check_id: Mapped[int] = mapped_column(ForeignKey("diligence_check_results.id"), index=True)
+    passage_candidate_id: Mapped[Optional[int]] = mapped_column(ForeignKey("research_passage_candidates.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="PENDING_REVIEW", index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("claim_id", "check_id", name="uq_claim_check_route"),)
+
+class ClaimCheckRoutingEvent(Base):
+    __tablename__ = "claim_check_routing_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    routing_candidate_id: Mapped[int] = mapped_column(ForeignKey("claim_check_routing_candidates.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class DiligenceCase(Base):
     __tablename__ = "diligence_cases"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -14,6 +14,8 @@ After official identity corroboration, discover review-only diligence documents 
 
 Use authenticated `GET /evidence-review/passages` to inspect exact passage packets. `PROPOSE_SUPPORT` requires `evidence:write`, an exact passage substring, substantive rationale, and the current status. `APPROVE_SUPPORT` requires `evidence:approve`, a different reviewer, the identical value, and `SUPPORT_PROPOSED`. Use `MARK_CONFLICT` when material claims disagree; do not force a support transition. The resulting supported claim still needs check-level evidence attachment and independent check approval.
 
+Approved passage claims create review-only routing candidates when an open case check has the same fact class. Inspect them through `GET /evidence-review/routing`; use the separate `evidence:routing:write` permission to `ATTACH`, `REJECT`, or `DEFER`. Attachment is not check approval. Continue through the check evidence-sufficiency and maker-checker workflow before relying on the case result.
+
 ## Public release
 
 Build before the final check so compiled browser bundles and source maps are inspected:

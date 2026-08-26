@@ -2,7 +2,8 @@ import pytest
 from sqlalchemy import create_engine,select,func
 from sqlalchemy.orm import sessionmaker
 
-from pmos_research.db import Base,Claim,ClaimEvidence,ConflictCase,ConflictMember,Entity,EvidencePassage,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
+from pmos_research.db import Base,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ConflictCase,ConflictMember,Entity,EvidencePassage,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
+from pmos_research.diligence import open_case
 from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
 
 def _fixture(db,predicate="legal_identity",passage_text="The legal name is Example Capital LP."):
@@ -16,6 +17,7 @@ def test_passage_support_requires_exact_value_and_independent_approval():
     engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine,expire_on_commit=False)
     with factory() as db:
         entity,candidate=_fixture(db)
+        open_case(db,entity.id,"default","counterparty assessment","internal diligence","case-owner")
         with pytest.raises(PassageAdjudicationError):adjudicate_passage(db,candidate.id,"PROPOSE_SUPPORT","maker","The passage establishes the legal identity","Invented Holdings LP",candidate.status)
         proposal=adjudicate_passage(db,candidate.id,"PROPOSE_SUPPORT","maker","The passage explicitly states the legal identity","Example Capital LP",candidate.status)
         with pytest.raises(PassageAdjudicationError):adjudicate_passage(db,candidate.id,"APPROVE_SUPPORT","maker","Attempting self approval of the passage","Example Capital LP",proposal["resulting_state"])
@@ -24,6 +26,7 @@ def test_passage_support_requires_exact_value_and_independent_approval():
         claim=db.get(Claim,result["claim_id"])
         assert claim.verification_status=="SUPPORTED" and claim.value=="Example Capital LP"
         assert db.scalar(select(func.count()).select_from(ClaimEvidence).where(ClaimEvidence.claim_id==claim.id))==1
+        assert result["routing_candidate_ids"] and db.scalar(select(func.count()).select_from(ClaimCheckRoutingCandidate))==1
 
 def test_material_contradiction_must_be_recorded_as_conflict():
     engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine,expire_on_commit=False)

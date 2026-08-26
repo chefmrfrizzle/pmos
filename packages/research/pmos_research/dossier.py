@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from .case_checks import evidence_sufficiency
 from .db import (
-    Claim, ClaimEvidence, CheckResult, ConflictCase, ConflictMember,
+    Claim, ClaimCheckRoutingCandidate, ClaimEvidence, CheckResult, ConflictCase, ConflictMember,
     DiligenceCase, DiligenceCheckEvidence, Entity, EvidencePassage,
     LegalIdentifier, RegistryIdentifierCandidate, ReviewSignoff, SourceDocument,
     ResearchPassageCandidate, ResearchSourceCandidate,
@@ -106,6 +106,8 @@ def build_dossier(session,case_id:int,include_passages:bool=True)->dict[str,Any]
         passage=session.get(EvidencePassage,candidate.evidence_passage_id)
         source=next(x for x in source_candidates if x.id==candidate.source_candidate_id)
         passage_rows.append({"id":candidate.id,"source_candidate_id":source.id,"predicate":candidate.predicate,"confidence":candidate.confidence,"status":candidate.status,"passage_hash":passage.passage_hash,**({"passage":passage.passage} if include_passages else {})})
+    check_ids=[x.id for x in checks]
+    routes=session.scalars(select(ClaimCheckRoutingCandidate).where(ClaimCheckRoutingCandidate.check_id.in_(check_ids)).order_by(ClaimCheckRoutingCandidate.id)).all() if check_ids else []
     linked_count=sum(1 for row in claim_rows if row["evidence_state"]=="EXACT_PASSAGE_LINKED")
     return {
         "classification":"PRIVATE—AUTHORIZED USE ONLY","generated_at":as_of.isoformat(),
@@ -116,7 +118,7 @@ def build_dossier(session,case_id:int,include_passages:bool=True)->dict[str,Any]
         "recorded_conflicts":conflict_rows,"potential_conflicts":_potential_conflicts(claims),
         "legal_identifiers":[{"type":x.identifier_type,"value":x.identifier_value,"jurisdiction":x.jurisdiction,"status":x.status,"claim_id":x.claim_id} for x in identifiers],
         "identifier_candidates":[{"id":x.id,"type":x.identifier_type,"value":x.identifier_value,"jurisdiction":x.jurisdiction,"match_state":x.match_state,"confidence":x.confidence,"status":x.status,"claim_id":x.claim_id} for x in candidates],
-        "research_queue":{"sources":[{"id":x.id,"document_type":x.document_type,"source_url":x.source_url,"target_predicates":json.loads(x.target_predicates_json),"discovery_score":x.discovery_score,"status":x.status} for x in source_candidates],"passages":passage_rows},
+        "research_queue":{"sources":[{"id":x.id,"document_type":x.document_type,"source_url":x.source_url,"target_predicates":json.loads(x.target_predicates_json),"discovery_score":x.discovery_score,"status":x.status} for x in source_candidates],"passages":passage_rows,"claim_check_routes":[{"id":x.id,"claim_id":x.claim_id,"check_id":x.check_id,"passage_candidate_id":x.passage_candidate_id,"status":x.status,"reason":x.reason} for x in routes]},
         "specialist_signoffs":[{"reviewer":x.reviewer,"role":x.role,"decision":x.decision,"rationale":x.rationale,"signed_at":_utc(x.signed_at).isoformat()} for x in signoffs],
         "limitations":["Absence of evidence is not evidence of absence.","Potential conflicts require temporal, semantic, and specialist review.","Candidate identifiers are not accepted legal identity until independently adjudicated."],
     }

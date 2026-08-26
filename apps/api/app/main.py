@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import CheckResult,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -18,6 +18,8 @@ from pmos_research.adjudication import AdjudicationInputError,StaleReviewError,a
 from pmos_research.identity_review import build_review_packet
 from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
 from pmos_research.passage_review import build_passage_packet
+from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
+from pmos_research.evidence_route_review import build_route_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -38,6 +40,11 @@ class PassageActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=40)
     rationale:str=Field(min_length=10,max_length=2000)
     claim_value:Optional[str]=Field(default=None,max_length=1000)
+    expected_status:str=Field(min_length=5,max_length=40)
+
+class RoutingActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=20)
+    rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
 
 @asynccontextmanager
@@ -133,6 +140,25 @@ def passage_review_action(candidate_id:int,body:PassageActionRequest,principal:P
         try:result=adjudicate_passage(s,candidate_id,body.action,principal.subject,body.rationale,body.claim_value,body.expected_status)
         except PassageAdjudicationError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"PASSAGE_REVIEW_ACTION",{"candidate_id":candidate_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"claim_created":bool(result["claim_id"])});s.commit();return result
+
+@app.get("/evidence-review/routing")
+def evidence_routing_queue(status:str="PENDING_REVIEW",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"evidence:routing:review",{"RESEARCHER","REVIEWER","ADMIN"})
+    with SessionLocal() as s:
+        routes=s.query(ClaimCheckRoutingCandidate).filter(ClaimCheckRoutingCandidate.status==status.upper()).order_by(ClaimCheckRoutingCandidate.id).limit(limit*5).all();rows=[]
+        for route in routes:
+            packet=build_route_packet(s,route.id)
+            if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"EVIDENCE_ROUTING_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/evidence-review/routing/{route_id}/actions")
+def evidence_routing_action(route_id:int,body:RoutingActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_route_packet(s,route_id);authorize(principal,"evidence:routing:write",{"RESEARCHER","REVIEWER","ADMIN"},packet["universe"])
+        try:result=adjudicate_route(s,route_id,body.action,principal.subject,body.rationale,body.expected_status)
+        except EvidenceRoutingError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"EVIDENCE_ROUTING_ACTION",{"route_id":route_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"check_id":result["check_id"]});s.commit();return result
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"pmos-api"}
