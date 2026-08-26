@@ -1,16 +1,16 @@
-import pytest
+import hashlib,pytest
 from sqlalchemy import create_engine,select,func
 from sqlalchemy.orm import sessionmaker
 
-from pmos_research.db import Base,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ConflictCase,ConflictMember,Entity,EvidencePassage,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
+from pmos_research.db import Base,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ConflictCase,ConflictMember,Entity,EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
 from pmos_research.diligence import open_case
 from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
 
 def _fixture(db,predicate="legal_identity",passage_text="The legal name is Example Capital LP."):
     entity=Entity(name="Example Capital",canonical_name="example capital",universe="venture_capital");db.add(entity);db.flush()
     source=ResearchSourceCandidate(entity_id=entity.id,source_url="https://official.example/legal",source_domain="official.example",document_type="LEGAL_IDENTITY",target_predicates_json=f'["{predicate}"]',discovered_from_url="https://official.example",discovery_score=80,status="RETRIEVED_REVIEW_REQUIRED");db.add(source);db.flush()
-    document=SourceDocument(entity_id=entity.id,publisher="official.example",publisher_independence_group="official.example",source_rank="S1",source_type="official_website",source_url=source.source_url,content_hash="a"*64);db.add(document);db.flush()
-    passage=EvidencePassage(document_id=document.id,section="candidate",passage=passage_text,passage_hash="b"*64);db.add(passage);db.flush()
+    digest=hashlib.sha256(passage_text.encode()).hexdigest();document=SourceDocument(entity_id=entity.id,publisher="official.example",publisher_independence_group="official.example",source_rank="S1",source_type="official_website",source_url=source.source_url,content_hash=digest);db.add(document);db.flush()
+    db.add(ResearchDocumentSnapshot(source_candidate_id=source.id,source_document_id=document.id,normalized_text=passage_text,text_hash=digest));passage=EvidencePassage(document_id=document.id,section="candidate",passage=passage_text,passage_hash=digest);db.add(passage);db.flush()
     candidate=ResearchPassageCandidate(source_candidate_id=source.id,evidence_passage_id=passage.id,predicate=predicate,confidence=.75);db.add(candidate);db.flush();return entity,candidate
 
 def test_passage_support_requires_exact_value_and_independent_approval():
@@ -38,3 +38,12 @@ def test_material_contradiction_must_be_recorded_as_conflict():
         assert result["resulting_state"]=="CONFLICT" and db.get(Claim,result["claim_id"]).verification_status=="CONFLICT"
         conflict=db.scalar(select(ConflictCase));members=set(db.scalars(select(ConflictMember.claim_id).where(ConflictMember.conflict_id==conflict.id)))
         assert members=={prior.id,result["claim_id"]} and conflict.status=="HUMAN_REVIEW_REQUIRED"
+
+def test_passage_support_fails_closed_when_snapshot_or_passage_integrity_breaks():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine,expire_on_commit=False)
+    with factory() as db:
+        _,candidate=_fixture(db);passage=db.get(EvidencePassage,candidate.evidence_passage_id);passage.passage_hash="0"*64;db.flush()
+        with pytest.raises(PassageAdjudicationError,match="integrity"):
+            adjudicate_passage(db,candidate.id,"PROPOSE_SUPPORT","maker","The passage would otherwise support identity","Example Capital LP",candidate.status)
+        result=adjudicate_passage(db,candidate.id,"REJECT","maker","Evidence integrity failed and cannot support this assertion",expected_status=candidate.status)
+        assert result["resulting_state"]=="REJECTED"

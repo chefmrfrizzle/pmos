@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import re,secrets
+import hashlib,re,secrets
+from datetime import datetime,timezone
 
 from sqlalchemy import select
 
@@ -9,8 +10,9 @@ from .evidence_routing import queue_claim_routes
 from .db import (
     Claim,ClaimEvidence,ConflictCase,ConflictMember,EvidencePassage,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    ResearchSourceCandidate,SourceDocument,
+    ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument,
 )
+from .diligence import FRESHNESS_DAYS
 
 MATERIAL_SINGLE_VALUE={"legal_identity","legal_name","legal_status","regulatory_status","ownership_control","authority_to_transact","fund_manager","fund_domicile"}
 ACTIVE_CLAIM_STATES={"CANDIDATE","SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED","CONFLICT"}
@@ -33,6 +35,17 @@ def _context(session,candidate_id:int):
     if not source or not passage or not document or document.entity_id!=source.entity_id:raise PassageAdjudicationError("candidate evidence chain is incomplete or out of scope")
     return candidate,source,passage,document
 
+def evidence_controls(session,candidate,source,passage,document)->dict:
+    snapshot=session.scalar(select(ResearchDocumentSnapshot).where(ResearchDocumentSnapshot.source_candidate_id==source.id,ResearchDocumentSnapshot.source_document_id==document.id,ResearchDocumentSnapshot.text_hash==document.content_hash).order_by(ResearchDocumentSnapshot.id.desc()))
+    passage_hash_valid=secrets.compare_digest(hashlib.sha256(passage.passage.encode()).hexdigest(),passage.passage_hash)
+    snapshot_hash_valid=bool(snapshot) and secrets.compare_digest(hashlib.sha256(snapshot.normalized_text.encode()).hexdigest(),snapshot.text_hash)
+    passage_in_snapshot=bool(snapshot) and _normalized(passage.passage) in _normalized(snapshot.normalized_text)
+    observed=document.retrieved_at if document.retrieved_at.tzinfo else document.retrieved_at.replace(tzinfo=timezone.utc)
+    age=max(0,(datetime.now(timezone.utc)-observed).days);freshness_key="identity" if candidate.predicate in {"legal_identity","legal_name"} else candidate.predicate;threshold=FRESHNESS_DAYS.get(freshness_key,180)
+    conflicts=session.scalars(select(ConflictCase).where(ConflictCase.entity_id==source.entity_id,ConflictCase.predicate==candidate.predicate,ConflictCase.status!="RESOLVED")).all()
+    integrity=passage_hash_valid and snapshot_hash_valid and passage_in_snapshot and document.source_rank=="S1"
+    return {"passage_hash_valid":passage_hash_valid,"snapshot_hash_valid":snapshot_hash_valid,"passage_in_snapshot":passage_in_snapshot,"source_rank_eligible":document.source_rank=="S1","freshness":{"state":"CURRENT" if age<=threshold else "STALE","age_days":age,"threshold_days":threshold,"observed_at":observed.isoformat()},"open_conflict_count":len(conflicts),"material_open_conflict":any(x.materiality=="MATERIAL" for x in conflicts),"evidence_eligible":integrity and age<=threshold,"support_eligible":integrity and age<=threshold and not any(x.materiality=="MATERIAL" for x in conflicts)}
+
 def _material_conflicts(session,entity_id:int,predicate:str,value:str)->list[Claim]:
     if predicate not in MATERIAL_SINGLE_VALUE:return []
     claims=session.scalars(select(Claim).where(Claim.entity_id==entity_id,Claim.field==predicate,Claim.verification_status.in_(ACTIVE_CLAIM_STATES))).all()
@@ -53,6 +66,9 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
         "SUPPORT_PROPOSED":{"APPROVE_SUPPORT":"SUPPORTED","REJECT":"REJECTED","MARK_CONFLICT":"CONFLICT"},
     }
     if action not in transitions.get(prior,{}):raise PassageAdjudicationError(f"invalid transition {prior} -> {action}")
+    controls=evidence_controls(session,candidate,source,passage,document)
+    if action in {"PROPOSE_SUPPORT","APPROVE_SUPPORT","MARK_CONFLICT"} and not controls["evidence_eligible"]:raise PassageAdjudicationError("evidence integrity, first-party rank, or freshness control failed")
+    if action in {"PROPOSE_SUPPORT","APPROVE_SUPPORT"} and controls["material_open_conflict"]:raise PassageAdjudicationError("an open material conflict blocks support; use the conflict workflow")
     value=_validate_value(passage.passage,claim_value or "") if action in {"PROPOSE_SUPPORT","APPROVE_SUPPORT","MARK_CONFLICT"} else None
     events=session.scalars(select(ResearchPassageAdjudicationEvent).where(ResearchPassageAdjudicationEvent.passage_candidate_id==candidate.id).order_by(ResearchPassageAdjudicationEvent.id)).all()
     result=transitions[prior][action];claim=None;route_ids=[]
@@ -75,5 +91,5 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
         for claim_id in sorted(member_ids-existing):session.add(ConflictMember(conflict_id=conflict.id,claim_id=claim_id))
     candidate.status=result
     event=ResearchPassageAdjudicationEvent(passage_candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale.strip(),claim_value=value,resulting_claim_id=claim.id if claim else None);session.add(event)
-    append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,"REVIEWER",action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":__import__("hashlib").sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"rationale":rationale.strip()})
+    append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,"REVIEWER",action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":hashlib.sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"evidence_controls":controls,"rationale":rationale.strip()})
     session.flush();return {"candidate_id":candidate.id,"prior_state":prior,"resulting_state":result,"claim_id":claim.id if claim else None,"routing_candidate_ids":route_ids}

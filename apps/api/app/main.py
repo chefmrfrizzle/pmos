@@ -142,15 +142,22 @@ def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Prin
         audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
 
 @app.get("/evidence-review/passages")
-def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",predicate:Optional[str]=None,min_confidence:float=Query(0,ge=0,le=1),evidence_state:Optional[str]=None,limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
     authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
+    normalized_state=evidence_state.upper() if evidence_state else None
+    if normalized_state and normalized_state not in {"ELIGIBLE","BLOCKED","STALE","CONFLICT"}:raise HTTPException(status_code=422,detail="unsupported evidence state")
     with SessionLocal() as s:
-        candidates=s.query(ResearchPassageCandidate).filter(ResearchPassageCandidate.status==status.upper()).order_by(ResearchPassageCandidate.confidence.desc(),ResearchPassageCandidate.id).limit(limit*5).all();rows=[]
+        query=s.query(ResearchPassageCandidate).filter(ResearchPassageCandidate.status==status.upper(),ResearchPassageCandidate.confidence>=min_confidence)
+        if predicate:query=query.filter(ResearchPassageCandidate.predicate==predicate.casefold())
+        candidates=query.order_by(ResearchPassageCandidate.confidence.desc(),ResearchPassageCandidate.id).limit(limit*10).all();rows=[]
         for candidate in candidates:
             packet=build_passage_packet(s,candidate.id)
+            controls=packet["evidence_controls"]
+            state_matches=not normalized_state or (normalized_state=="ELIGIBLE" and controls["support_eligible"]) or (normalized_state=="BLOCKED" and not controls["evidence_eligible"]) or (normalized_state=="STALE" and controls["freshness"]["state"]=="STALE") or (normalized_state=="CONFLICT" and controls["material_open_conflict"])
+            if not state_matches:continue
             if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
             if len(rows)>=limit:break
-        audit_access(s,principal,"PASSAGE_REVIEW_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+        audit_access(s,principal,"PASSAGE_REVIEW_LISTED",{"status":status.upper(),"predicate":predicate.casefold() if predicate else None,"min_confidence":min_confidence,"evidence_state":normalized_state,"limit":limit,"result_count":len(rows)});s.commit();return rows
 
 @app.post("/evidence-review/passages/{candidate_id}/actions")
 def passage_review_action(candidate_id:int,body:PassageActionRequest,principal:Principal=Depends(authenticate_private_request)):
