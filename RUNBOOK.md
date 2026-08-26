@@ -169,7 +169,9 @@ PMOS_PRIVATE_ROOT='/absolute/private/root' \
   ./.venv/bin/python scripts/backup_private.py --backup-root /absolute/private/backups
 ```
 
-The job verifies the source ledger and SQLite integrity, uses SQLite’s online backup operation, sets `0700/0600` permissions, verifies the copied ledger/integrity, hashes the artifact, creates a classified manifest, and appends a backup event to the source ledger. `--allow-unverified-storage` is development-only and must not be used for institutional data.
+The job does not initialize or migrate schema. It first verifies the existing source ledger and SQLite integrity, uses SQLite’s online backup operation, sets `0700/0600` permissions, verifies the copied ledger/integrity, hashes the artifact, creates a classified manifest, and only then appends a backup event to the source ledger. `--allow-unverified-storage` is development-only and must not be used for institutional data.
+
+Exercise recovery with `python scripts/run_isolated_job.py restore-drill`. The job selects the latest verified manifest, restores it only to a newly created encrypted temporary directory outside the public repository, verifies the artifact hash, SQLite integrity, and audit ledger, removes the temporary restored database, and records only aggregate proof. A successful local SQLite drill does not prove recovery for a future production PostgreSQL deployment.
 
 Verify and restore without overwriting the operating database:
 

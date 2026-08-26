@@ -23,6 +23,7 @@ JOBS={
     "control-assurance":"assure_private_controls.py",
     "security-readiness":"assess_security_readiness.py",
     "retention-assessment":"assess_retention.py",
+    "restore-drill":"run_restore_drill.py",
     "universe-coverage":"assess_universe_coverage.py",
     "jurisdiction-review-prepare":"prepare_jurisdiction_review.py",
     "evidence-review-freeze":"freeze_evidence_review_batch.py",

@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionCandidateEvent,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipMentionReviewAssignment,RelationshipMentionReviewAssignmentEvent,RelationshipMentionReviewBatch,RelationshipMentionReviewBatchItem,RelationshipMentionReviewDecisionBinding,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    LegalHold,LegalHoldEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RetentionAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    LegalHold,LegalHoldEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -79,6 +79,12 @@ def run_control_assurance(session)->dict:
         except Exception:valid_status=False
         bad+=hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or not valid_status
     controls.append(_control("retention_assessment_report_integrity",len(retention_runs),bad))
+    restore_drills=session.scalars(select(RestoreDrillRun)).all();bad=0
+    for run in restore_drills:
+        try:parsed=json.loads(run.report_json);valid=parsed.get("classification")=="PMOS PRIVATE AGGREGATE RESTORE DRILL — NO PATHS OR RECORD VALUES" and parsed.get("status")==run.status and parsed.get("backup_sha256")==run.backup_sha256 and parsed.get("ledger_entries")==run.ledger_entries
+        except Exception:valid=False
+        bad+=not valid or hashlib.sha256(run.report_json.encode()).hexdigest()!=run.result_hash or run.status!="PASS" or len(run.backup_sha256)!=64 or run.sqlite_integrity!="ok" or not run.encrypted_storage_verified or not run.temporary_restore_removed or run.ledger_entries<0
+    controls.append(_control("restore_drill_integrity",len(restore_drills),bad))
     holds=session.scalars(select(LegalHold)).all();bad=0
     for hold in holds:
         events=session.scalars(select(LegalHoldEvent).where(LegalHoldEvent.legal_hold_id==hold.id).order_by(LegalHoldEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in events if x.action=="APPROVE"),None);released=next((x for x in reversed(events) if x.action=="RELEASE"),None)
