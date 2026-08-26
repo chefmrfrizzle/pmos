@@ -32,6 +32,8 @@ Run `python scripts/run_isolated_job.py security-readiness` for the consolidated
 
 Run `python scripts/run_isolated_job.py relationship-discovery --limit 100` after exact-passage retrieval. Inspect candidates through authenticated `GET /relationship-candidates`. A researcher may reject, defer, or `PROPOSE_ASSERTION`; the latter creates only a controlled assertion using the same exact passage. Never treat a candidate, co-mention, or single S1 source as a verified edge. Continue through independent relationship review, and require dispositive S0 evidence for ownership, control, beneficial ownership, or trustee relationships.
 
+For a proposed assertion, use `evidence_controls.corroboration_gaps` as a bounded remediation queue. Resolve hash, scope, freshness, and semantic failures before sourcing additional material. `SECOND_INDEPENDENT_PUBLISHER_REQUIRED` means content-distinct evidence, not a second URL carrying the same document. `DISPOSITIVE_S0_REQUIRED` cannot be cleared with press coverage or counterparty self-description.
+
 Inspect unmatched named objects through authenticated `GET /relationship-mentions`. `LINK_TARGET` requires a distinct existing entity and authorization over both universes; otherwise reject or defer. Never create a new institution merely to clear this queue. Confirm legal identity through the identity workflow first, then link the mention and continue through relationship-candidate review.
 
 Private control and ledger scripts select their datastore only through `PMOS_DB_URL`; they reject unsupported command-line arguments. Set the absolute external SQLite URL in the command environment and confirm the reported populations are consistent with the intended datastore before relying on the result.

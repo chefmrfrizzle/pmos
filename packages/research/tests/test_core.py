@@ -377,11 +377,13 @@ def test_relationship_corroboration_rejects_syndicated_duplicates_and_irrelevant
         duplicate_hash="d"*64;source,target,passages=_relationship_fixture(db,[("S1","publisher-a"),("S2","publisher-b")],content_hashes={1:duplicate_hash,2:duplicate_hash})
         assertion=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in passages]);controls=relationship_evidence_controls(db,assertion)
         assert controls["duplicate_content_count"]==1 and controls["independence_group_count"]==1 and not controls["verification_eligible"]
+        assert controls["corroboration_gaps"]==["SYNDICATED_OR_DUPLICATE_CONTENT_EXCLUDED","SECOND_INDEPENDENT_PUBLISHER_REQUIRED"]
         with pytest.raises(ValueError,match="verification policy"):verify_relationship(db,assertion.id,"checker","Syndicated content is not independent corroboration")
     with factory() as db:
         source,target,passages=_relationship_fixture(db,[("S0","registry")],"{source} and {target} filed annual returns.")
         assertion=propose_relationship(db,source.id,target.id,"OWNS","maker",[passages[0].id]);controls=relationship_evidence_controls(db,assertion)
         assert controls["semantic_scope_exceptions"]==1 and not controls["verification_eligible"]
+        assert "RELATIONSHIP_LANGUAGE_OR_ENTITY_PAIR_MISSING" in controls["corroboration_gaps"] and "DISPOSITIVE_S0_REQUIRED" in controls["corroboration_gaps"]
 
 def test_relationship_rejects_unknown_predicates_and_changed_evidence_package():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)

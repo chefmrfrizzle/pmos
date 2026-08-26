@@ -41,9 +41,20 @@ def relationship_evidence_controls(session,assertion:RelationshipAssertion)->dic
             seen_content.add(document.content_hash);ranks.add(document.source_rank)
             if document.source_rank in QUALIFYING_CORROBORATION:groups.add(document.publisher_independence_group)
         factors.append({"source_document_id":document.id,"passage_id":passage.id,"source_rank":document.source_rank,"independence_group":document.publisher_independence_group,"age_days":age,"freshness_threshold_days":threshold,"passage_hash_valid":hash_valid,"entity_pair_named":names_valid,"relationship_language_present":relation_language,"duplicate_content":duplicate_content,"eligible":eligible})
-    sufficient="S0" in ranks if assertion.sensitive else "S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}));integrity=bool(rows) and bad_hash==0 and out_of_scope==0 and stale==0 and semantic==0
+    sufficient="S0" in ranks if assertion.sensitive else "S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}));evidence_integrity=bool(rows) and bad_hash==0 and out_of_scope==0 and stale==0;semantic_valid=bool(rows) and semantic==0;integrity=evidence_integrity and semantic_valid
     rank_score=max(({"S0":1.0,"S1":.9,"S2":.8,"S3":.65}.get(x,.3) for x in ranks),default=0);independence_bonus=min(.1,max(0,len(groups)-1)*.05);confidence=round(min(1,rank_score+independence_bonus) if integrity and sufficient else min(.49,rank_score*.5),2)
-    return {"evidence_count":len(rows),"eligible_evidence_count":sum(x["eligible"] for x in factors),"passage_hash_exceptions":bad_hash,"entity_scope_exceptions":out_of_scope,"semantic_scope_exceptions":semantic,"stale_source_count":stale,"duplicate_content_count":duplicate,"source_ranks":sorted(ranks),"independence_groups":sorted(groups),"independence_group_count":len(groups),"policy_sufficient":sufficient,"integrity_valid":integrity,"verification_eligible":integrity and sufficient,"evidence_confidence":confidence,"confidence_factors":factors,"evidence_package_hash":_package_hash(rows)}
+    gaps=[]
+    if not rows:gaps.append("NO_EXACT_EVIDENCE")
+    if bad_hash:gaps.append("PASSAGE_HASH_FAILURE")
+    if out_of_scope:gaps.append("ENTITY_SCOPE_FAILURE")
+    if stale:gaps.append("STALE_EVIDENCE")
+    if semantic:gaps.append("RELATIONSHIP_LANGUAGE_OR_ENTITY_PAIR_MISSING")
+    if duplicate:gaps.append("SYNDICATED_OR_DUPLICATE_CONTENT_EXCLUDED")
+    if assertion.sensitive and "S0" not in ranks:gaps.append("DISPOSITIVE_S0_REQUIRED")
+    if not assertion.sensitive and "S0" not in ranks:
+        if not ranks & {"S1","S2"}:gaps.append("S1_OR_S2_REQUIRED")
+        if len(groups)<2:gaps.append("SECOND_INDEPENDENT_PUBLISHER_REQUIRED")
+    return {"evidence_count":len(rows),"eligible_evidence_count":sum(x["eligible"] for x in factors),"passage_hash_exceptions":bad_hash,"entity_scope_exceptions":out_of_scope,"semantic_scope_exceptions":semantic,"stale_source_count":stale,"duplicate_content_count":duplicate,"source_ranks":sorted(ranks),"independence_groups":sorted(groups),"independence_group_count":len(groups),"policy":"DISPOSITIVE_S0" if assertion.sensitive else "S0_OR_TWO_INDEPENDENT_S1_TO_S3_INCLUDING_S1_OR_S2","policy_sufficient":sufficient,"evidence_integrity_valid":evidence_integrity,"semantic_scope_valid":semantic_valid,"integrity_valid":integrity,"verification_eligible":integrity and sufficient,"corroboration_gaps":gaps,"evidence_confidence":confidence,"confidence_factors":factors,"evidence_package_hash":_package_hash(rows)}
 
 def propose_relationship(session,from_entity_id:int,to_entity_id:int,relation_type:str,proposer:str,evidence_passage_ids,jurisdiction:str|None=None):
     relation_type=relation_type.upper().strip()
