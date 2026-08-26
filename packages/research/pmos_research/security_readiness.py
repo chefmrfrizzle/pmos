@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func,select
 
 from .audit_ledger import append_ledger_event,verify_ledger
-from .db import ControlAssuranceRun,EvidenceReviewAssignment,IdentityReviewAssignment,PrivateSaleCase,RelationshipAssertion,RelationshipMentionReviewAssignment,SecurityReadinessRun
+from .db import ControlAssuranceRun,EvidenceReviewAssignment,IdentityReviewAssignment,PrivateSaleCase,RelationshipAssertion,RelationshipMentionReviewAssignment,RetentionAssessmentRun,SecurityReadinessRun
 
 def _control(control,status,evidence,limitation):return {"control":control,"status":status,"evidence":evidence,"limitation":limitation}
 def _aware(value):return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -26,9 +26,10 @@ def build_security_readiness(session,repo_root:Path,technical:dict,environment:d
     exact_hosts=bool(env.get("PMOS_ALLOWED_HOSTS",""));controls.append(_control("private_api_network_edge","CONFIGURED" if exact_hosts and oidc else "NOT_CONFIGURED",{"exact_allowed_hosts":exact_hosts,"oidc_enabled":oidc},"Gateway WAF, distributed rate limiting, TLS termination, and egress isolation are not evidenced locally."))
     active_evidence=session.scalar(select(func.count()).select_from(EvidenceReviewAssignment).where(EvidenceReviewAssignment.status=="ACTIVE")) or 0;active_identity=session.scalar(select(func.count()).select_from(IdentityReviewAssignment).where(IdentityReviewAssignment.status=="ACTIVE")) or 0;active_mentions=session.scalar(select(func.count()).select_from(RelationshipMentionReviewAssignment).where(RelationshipMentionReviewAssignment.status=="ACTIVE")) or 0;controls.append(_control("reviewer_operating_assignments","OPERATING" if active_evidence+active_identity+active_mentions else "NOT_STAFFED",{"active_evidence_assignments":active_evidence,"active_identity_assignments":active_identity,"active_mention_assignments":active_mentions},"Named authorized human reviewers are required before adjudication."))
     verified_relationships=session.scalar(select(func.count()).select_from(RelationshipAssertion).where(RelationshipAssertion.status=="SPECIALIST_VERIFIED")) or 0;private_sales=session.scalar(select(func.count()).select_from(PrivateSaleCase)) or 0;controls.append(_control("transaction_workflow_operating_evidence","OPERATING" if verified_relationships and private_sales else "NOT_EXERCISED",{"verified_relationships":verified_relationships,"private_sale_cases":private_sales},"Synthetic UI flows do not prove private operating procedures."))
-    for name in ("external_security_review","restore_drill","retention_and_deletion","monitoring_and_incident_response","gateway_rate_limit_and_waf"):
+    retention=session.scalar(select(RetentionAssessmentRun).order_by(RetentionAssessmentRun.id.desc()));retention_fresh=bool(retention and _aware(retention.created_at)>=now-timedelta(hours=24));controls.append(_control("retention_and_deletion","DESIGN_ONLY" if retention_fresh else "NOT_EVIDENCED",{"fresh_assessment":retention_fresh,"assessment_status":retention.status if retention else None,"policy_configured":bool(retention and retention.policy_hash)},"Dry-run assessment and legal holds do not prove approved policy execution or defensible deletion."))
+    for name in ("external_security_review","restore_drill","monitoring_and_incident_response","gateway_rate_limit_and_waf"):
         controls.append(_control(name,"NOT_EVIDENCED",{},"Requires dated external or operational evidence; no self-attestation is accepted."))
-    blocking={"FAIL","NOT_CONFIGURED","NOT_STAFFED","NOT_EXERCISED","NOT_EVIDENCED"};status="PRODUCTION_READY" if all(x["status"] not in blocking for x in controls) else "NOT_PRODUCTION_READY"
+    blocking={"FAIL","NOT_CONFIGURED","NOT_STAFFED","NOT_EXERCISED","NOT_EVIDENCED","DESIGN_ONLY"};status="PRODUCTION_READY" if all(x["status"] not in blocking for x in controls) else "NOT_PRODUCTION_READY"
     return {"classification":"PMOS PRIVATE AGGREGATE SECURITY READINESS — NO RECORD VALUES","generated_at":now.isoformat(),"status":status,"method":"fail_closed_v1","controls":controls,"summary":{state:sum(x["status"]==state for x in controls) for state in sorted({x["status"] for x in controls})}}
 
 def persist_security_readiness(session,report:dict,actor:str="security-readiness-worker")->SecurityReadinessRun:

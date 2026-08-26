@@ -1,0 +1,12 @@
+{
+  "version": "DRAFT-REQUIRES-POLICY-OWNER",
+  "status": "DRAFT",
+  "approved_by": "",
+  "approved_at": "",
+  "classes": {
+    "RAW_IMPORT": {"retention_days": null, "disposition": "REVIEW_DELETE"},
+    "CONTACT_DATA": {"retention_days": null, "disposition": "REVIEW_DELETE"},
+    "RESEARCH_CACHE": {"retention_days": null, "disposition": "REVIEW_DELETE"},
+    "RETRIEVAL_TELEMETRY": {"retention_days": null, "disposition": "REVIEW_DELETE"}
+  }
+}

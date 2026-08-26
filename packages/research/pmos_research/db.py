@@ -434,6 +434,40 @@ class UniverseCoverageRun(Base):
     actor: Mapped[str] = mapped_column(String(150))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class RetentionAssessmentRun(Base):
+    __tablename__ = "retention_assessment_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(40), index=True)
+    policy_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    report_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    report_json: Mapped[str] = mapped_column(Text)
+    actor: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class LegalHold(Base):
+    __tablename__ = "legal_holds"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope_type: Mapped[str] = mapped_column(String(40), index=True)
+    scope_reference_hash: Mapped[str] = mapped_column(String(64), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), default="PROPOSED", index=True)
+    created_by: Mapped[str] = mapped_column(String(150))
+    approved_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    released_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class LegalHoldEvent(Base):
+    __tablename__ = "legal_hold_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    legal_hold_id: Mapped[int] = mapped_column(ForeignKey("legal_holds.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    prior_state: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
+    resulting_state: Mapped[str] = mapped_column(String(30))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class SecurityReadinessRun(Base):
     __tablename__ = "security_readiness_runs"
     id: Mapped[int] = mapped_column(primary_key=True)

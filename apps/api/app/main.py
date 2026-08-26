@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipMentionReviewAssignment,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,LegalHold,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipMentionReviewAssignment,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -34,6 +34,7 @@ from pmos_research.evidence_review_batch import EvidenceReviewBatchError,build_b
 from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentError,assign_reviewer,assigned_evidence_batch_items,close_batch,revoke_assignment
 from pmos_research.publisher_independence import PublisherIndependenceError,adjudicate_publisher_independence,build_publisher_independence_packet,propose_publisher_independence
 from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,assigned_mention_batch_items,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,revoke_mention_assignment
+from pmos_research.retention import RetentionError,adjudicate_legal_hold,build_legal_hold_packet,propose_class_legal_hold
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -169,6 +170,15 @@ class ExportActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=30)
 
+class LegalHoldProposalRequest(BaseModel):
+    data_class:str=Field(min_length=3,max_length=80)
+    reason:str=Field(min_length=10,max_length=2000)
+
+class LegalHoldActionRequest(BaseModel):
+    action:str=Field(min_length=6,max_length=10)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:str=Field(min_length=6,max_length=30)
+
 @asynccontextmanager
 async def lifespan(app):
     init_db();yield
@@ -236,6 +246,28 @@ def security_readiness_latest(principal:Principal=Depends(authenticate_private_r
         run=s.scalar(select(SecurityReadinessRun).order_by(SecurityReadinessRun.id.desc()))
         if not run:raise HTTPException(status_code=404,detail="no security readiness assessment is available")
         report=json.loads(run.report_json);audit_access(s,principal,"SECURITY_READINESS_READ",{"readiness_run_id":run.id,"report_hash":run.report_hash,"status":run.status});s.commit();return report
+
+@app.post("/retention/legal-holds")
+def legal_hold_proposal(body:LegalHoldProposalRequest,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"retention:write",{"COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        try:hold=propose_class_legal_hold(s,body.data_class,principal.subject,body.reason)
+        except RetentionError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_legal_hold_packet(s,hold.id);audit_access(s,principal,"LEGAL_HOLD_PROPOSED",{"hold_id":hold.id,"scope_type":hold.scope_type,"scope_reference_hash":hold.scope_reference_hash});s.commit();return packet
+
+@app.get("/retention/legal-holds")
+def legal_hold_queue(status:str="PROPOSED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"retention:review",{"COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        rows=[build_legal_hold_packet(s,x.id) for x in s.scalars(select(LegalHold).where(LegalHold.status==status.upper()).order_by(LegalHold.id).limit(limit))];audit_access(s,principal,"LEGAL_HOLDS_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/retention/legal-holds/{hold_id}/actions")
+def legal_hold_action(hold_id:int,body:LegalHoldActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"retention:approve",{"COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        try:hold=adjudicate_legal_hold(s,hold_id,body.action,principal.subject,body.rationale,body.expected_status)
+        except RetentionError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_legal_hold_packet(s,hold.id);audit_access(s,principal,"LEGAL_HOLD_ACTION",{"hold_id":hold.id,"action":body.action.upper(),"resulting_state":hold.status,"scope_reference_hash":hold.scope_reference_hash});s.commit();return packet
 
 @app.get("/identity-review")
 def identity_review_queue(review_batch_id:int=Query(gt=0),resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):

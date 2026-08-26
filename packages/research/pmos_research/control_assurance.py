@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionCandidateEvent,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipMentionReviewAssignment,RelationshipMentionReviewAssignmentEvent,RelationshipMentionReviewBatch,RelationshipMentionReviewBatchItem,RelationshipMentionReviewDecisionBinding,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    PublisherIndependenceAssessment,PublisherIndependenceEvent,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    LegalHold,LegalHoldEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RetentionAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -73,6 +73,17 @@ def run_control_assurance(session)->dict:
         except Exception:valid_status=False
         bad+=hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or not valid_status
     controls.append(_control("security_readiness_report_integrity",len(readiness_runs),bad))
+    retention_runs=session.scalars(select(RetentionAssessmentRun)).all();bad=0
+    for run in retention_runs:
+        try:parsed=json.loads(run.report_json);valid_status=parsed.get("status")==run.status and parsed.get("classification")=="PMOS PRIVATE AGGREGATE RETENTION ASSESSMENT — NO RECORD VALUES" and parsed.get("policy_hash")==run.policy_hash
+        except Exception:valid_status=False
+        bad+=hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or not valid_status
+    controls.append(_control("retention_assessment_report_integrity",len(retention_runs),bad))
+    holds=session.scalars(select(LegalHold)).all();bad=0
+    for hold in holds:
+        events=session.scalars(select(LegalHoldEvent).where(LegalHoldEvent.legal_hold_id==hold.id).order_by(LegalHoldEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in events if x.action=="APPROVE"),None);released=next((x for x in reversed(events) if x.action=="RELEASE"),None)
+        bad+=not proposal or proposal.actor!=hold.created_by or (hold.status in {"ACTIVE","RELEASED"} and (not approval or approval.actor==hold.created_by or hold.approved_by!=approval.actor)) or (hold.status=="RELEASED" and (not released or released.actor in {hold.created_by,hold.approved_by} or hold.released_by!=released.actor or not hold.released_at))
+    controls.append(_control("legal_hold_maker_checker_and_history",len(holds),bad))
 
     attempts=session.scalars(select(SourceRetrievalAttempt).order_by(SourceRetrievalAttempt.source_candidate_id,SourceRetrievalAttempt.attempt_number)).all();grouped={};bad=0
     for attempt in attempts:grouped.setdefault(attempt.source_candidate_id,[]).append(attempt)
