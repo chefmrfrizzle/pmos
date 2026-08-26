@@ -56,6 +56,8 @@ The structure model distinguishes legal entities, funds, share classes, accounts
 
 PMOS recommends escalation; humans decide. There is no autonomous outreach, entity merge, beneficial-ownership inference, or legal conclusion.
 
+Each mandatory check moves through `NOT_STARTED → EVIDENCE_COLLECTED → REVIEW_PROPOSED → SPECIALIST_VERIFIED`. Evidence must be an assertion belonging to the case entity and linked to an exact passage. Completion requires dispositive S0 evidence or two independent qualifying sources including S1/S2, no unresolved predicate conflict, a maker proposal, and a different approver. Exceptions use a separate proposed/approved path and retain rationale; an exception can only produce AMBER, while legal-identity or transaction-authority exceptions remain RED.
+
 ## Dossier output
 
 A dossier contains the executive decision summary, identity tree, ownership/control and authority, regulatory standing, structure diagram, defined capital metrics, decision-makers/gatekeepers, sourced relationship map, public contact paths, scoped adverse-event checks, conflicts/exceptions, evidence coverage, freshness, limitations, next action, and reviewer sign-off. Every material sentence drills into its claim and exact evidence passage.

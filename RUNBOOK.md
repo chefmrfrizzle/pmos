@@ -78,3 +78,9 @@ PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
 ```
 
 The command emits aggregate counts only. Candidate order is not precedence. `PROBABLE_MATCH` still requires separate official identity evidence, a maker proposal, and independent approval. Possible, conflicting, or review-required candidates cannot enter the accepted legal-identifier table.
+
+## Diligence-check adjudication
+
+Use authenticated private API routes to inspect `/diligence-cases/{case_id}`, attach claim IDs to a check, propose completion or an exception, and obtain independent approval. Evidence must belong to the case entity and contain exact-passage links. A 409 response means the state, source sufficiency, entity scope, or conflict policy failed; reload and investigate instead of retrying blindly.
+
+`PROPOSE_COMPLETE` and `APPROVE` require source sufficiency. `PROPOSE_EXCEPTION` and `APPROVE_EXCEPTION` preserve the restriction and never create GREEN readiness. Researchers cannot approve their own work. Verify the audit ledger after every adjudication batch.

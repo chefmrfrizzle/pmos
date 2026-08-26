@@ -5,9 +5,22 @@ from typing import Optional
 from contextlib import asynccontextmanager
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/"packages/research"))
 from fastapi import FastAPI, Query, Depends, HTTPException, Request
+from pydantic import BaseModel,Field
+from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import init_db, SessionLocal, Entity
+from pmos_research.db import CheckResult,DiligenceCase,DiligenceCheckEvidence,init_db, SessionLocal, Entity
+from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
+from pmos_research.diligence import readiness
+
+class CheckEvidenceRequest(BaseModel):
+    claim_ids:list[int]=Field(min_length=1,max_length=50)
+    rationale:str=Field(min_length=10,max_length=2000)
+
+class CheckActionRequest(BaseModel):
+    action:str=Field(min_length=3,max_length=40)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:Optional[str]=Field(default=None,max_length=40)
 
 @asynccontextmanager
 async def lifespan(app):
@@ -57,3 +70,39 @@ def claims(entity_id:int,principal:Principal=Depends(authenticate_private_reques
         rows=s.query(Claim).filter(Claim.entity_id==entity_id).order_by(Claim.confidence.desc()).limit(500).all()
         audit_access(s,principal,"CLAIMS_VIEWED",{"entity_id":entity_id,"result_count":len(rows)});s.commit()
         return [{"field":x.field,"value":x.value,"source_url":x.source_url,"confidence":x.confidence,"verification_status":x.verification_status,"observed_at":x.observed_at} for x in rows]
+
+def _case_scope(session,case_id:int,principal:Principal,permission:str,roles:set[str]):
+    case=session.get(DiligenceCase,case_id)
+    if not case:raise HTTPException(status_code=404,detail="not found")
+    entity=session.get(Entity,case.entity_id)
+    if not entity:raise HTTPException(status_code=404,detail="not found")
+    authorize(principal,permission,roles,entity.universe);return case,entity
+
+@app.get("/diligence-cases/{case_id}")
+def diligence_case(case_id:int,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        case,entity=_case_scope(s,case_id,principal,"checks:read",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
+        checks=s.query(CheckResult).filter(CheckResult.case_id==case.id).order_by(CheckResult.id).all();evidence={x.id:sorted(s.scalars(select(DiligenceCheckEvidence.claim_id).where(DiligenceCheckEvidence.check_id==x.id)).all()) for x in checks}
+        audit_access(s,principal,"DILIGENCE_CASE_VIEWED",{"case_id":case.id});s.commit()
+        return {"id":case.id,"entity_id":case.entity_id,"status":case.status,"risk_tier":case.risk_tier,"as_of":case.as_of,"readiness":readiness(s,case.id),"checks":[{"id":x.id,"code":x.check_code,"status":x.status,"mandatory":x.mandatory,"exception_reason":x.exception_reason,"claim_ids":evidence[x.id],"sufficiency":evidence_sufficiency(s,x.id)} for x in checks]}
+
+@app.post("/diligence-cases/{case_id}/checks/{check_id}/evidence")
+def attach_check_evidence(case_id:int,check_id:int,body:CheckEvidenceRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        case,entity=_case_scope(s,case_id,principal,"checks:write",{"RESEARCHER","REVIEWER","ADMIN"});check=s.get(CheckResult,check_id)
+        if not check or check.case_id!=case.id:raise HTTPException(status_code=404,detail="not found")
+        try:submit_check_evidence(s,check.id,body.claim_ids,principal.subject,body.rationale)
+        except CheckAdjudicationError as exc:raise HTTPException(status_code=409,detail=str(exc))
+        audit_access(s,principal,"CHECK_EVIDENCE_ATTACHED",{"case_id":case.id,"check_id":check.id,"claim_count":len(set(body.claim_ids))});s.commit()
+        return {"check_id":check.id,"status":check.status,"sufficiency":evidence_sufficiency(s,check.id)}
+
+@app.post("/diligence-cases/{case_id}/checks/{check_id}/actions")
+def act_on_check(case_id:int,check_id:int,body:CheckActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    action=body.action.upper();approval=action in {"APPROVE","APPROVE_EXCEPTION"};permission="checks:approve" if approval else "checks:write";roles={"REVIEWER","COUNSEL","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
+    with SessionLocal() as s:
+        case,entity=_case_scope(s,case_id,principal,permission,roles);check=s.get(CheckResult,check_id)
+        if not check or check.case_id!=case.id:raise HTTPException(status_code=404,detail="not found")
+        try:adjudicate_check(s,check.id,action,principal.subject,body.rationale,body.expected_status)
+        except CheckAdjudicationError as exc:raise HTTPException(status_code=409,detail=str(exc))
+        audit_access(s,principal,"CHECK_ACTION",{"case_id":case.id,"check_id":check.id,"action":action,"resulting_status":check.status});s.commit()
+        return {"check_id":check.id,"status":check.status,"readiness":readiness(s,case.id)}

@@ -433,6 +433,26 @@ class IdentifierAdjudicationEvent(Base):
     rationale: Mapped[str] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class DiligenceCheckEvidence(Base):
+    __tablename__ = "diligence_check_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_id: Mapped[int] = mapped_column(ForeignKey("diligence_check_results.id"), index=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), index=True)
+    added_by: Mapped[str] = mapped_column(String(150))
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("check_id", "claim_id", name="uq_check_claim_evidence"),)
+
+class DiligenceCheckAdjudicationEvent(Base):
+    __tablename__ = "diligence_check_adjudication_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_id: Mapped[int] = mapped_column(ForeignKey("diligence_check_results.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 def install_ledger_guards(target_engine) -> None:
     if target_engine.dialect.name=="sqlite":
         with target_engine.begin() as connection:

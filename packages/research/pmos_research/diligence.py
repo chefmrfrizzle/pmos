@@ -95,14 +95,16 @@ def readiness(session, case_id: int) -> dict:
         ConflictCase.status != "RESOLVED",
     )).all()
     missing = [x.check_code for x in checks if x.mandatory and x.status not in {"CORROBORATED", "SPECIALIST_VERIFIED", "EXCEPTED"}]
+    exceptions=[x.check_code for x in checks if x.status=="EXCEPTED"]
+    critical_exceptions=[x for x in exceptions if x in {"legal_identity","authority_to_transact"}]
     material = [x.predicate for x in conflicts if x.materiality == "MATERIAL"]
-    if material or any(x in missing for x in {"legal_identity", "authority_to_transact"}):
+    if material or critical_exceptions or any(x in missing for x in {"legal_identity", "authority_to_transact"}):
         state = "RED"
-    elif missing:
+    elif missing or exceptions:
         state = "AMBER"
     else:
         state = "GREEN"
-    return {"state": state, "missing_checks": sorted(missing), "material_conflicts": sorted(material)}
+    return {"state": state, "missing_checks": sorted(missing), "exceptions":sorted(exceptions),"material_conflicts": sorted(material)}
 
 
 def specialist_signoff(session, case_id: int, reviewer: str, role: str, decision: str, rationale: str, scope=()):

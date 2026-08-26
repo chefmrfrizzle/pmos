@@ -9,6 +9,7 @@ from pmos_research.audit_ledger import append_ledger_event,verify_ledger
 from pmos_research.relationship_controls import propose_relationship,verify_relationship
 from pmos_research.registry_research import assess_lei_candidate,persist_lei_candidate
 from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
+from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooLarge, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
 import pytest
@@ -197,7 +198,7 @@ def test_material_conflict_blocks_readiness_and_high_risk_requires_maker_checker
         for check in db.scalars(select(CheckResult).where(CheckResult.case_id==case.id)):
             check.status="CORROBORATED"
         db.add(ConflictCase(entity_id=entity.id,predicate="fund_manager",materiality="MATERIAL"));db.flush()
-        assert readiness(db,case.id)=={"state":"RED","missing_checks":[],"material_conflicts":["fund_manager"]}
+        assert readiness(db,case.id)=={"state":"RED","missing_checks":[],"exceptions":[],"material_conflicts":["fund_manager"]}
         with pytest.raises(ValueError):specialist_signoff(db,case.id,"maker","reviewer","APPROVE","looks good")
         specialist_signoff(db,case.id,"independent-reviewer","reviewer","ESCALATE","manager conflict remains")
 
@@ -359,3 +360,48 @@ def test_possible_identifier_candidate_cannot_be_proposed():
         entity=Entity(name="Example Capital",canonical_name="example capital",universe="private_equity",country="CA");db.add(entity);db.flush();_supported_identity(db,entity)
         candidate,_=persist_lei_candidate(db,entity,_lei_record(legal_name="Example Capital Management"));candidate.match_state="POSSIBLE_MATCH"
         with pytest.raises(IdentifierAdjudicationError):adjudicate_identifier(db,candidate.id,"PROPOSE_ACCEPTANCE","maker","needs acceptance","PENDING_REVIEW")
+
+def _ranked_claim(db,entity,field,status,rank,group,index):
+    document=SourceDocument(entity_id=entity.id,publisher=group,publisher_independence_group=group,source_rank=rank,source_type="test",source_url=f"https://{group}/{index}",content_hash=f"{index:064x}"[-64:]);db.add(document);db.flush()
+    passage=EvidencePassage(document_id=document.id,section="record",passage=f"{field} evidence",passage_hash=f"{index+100:064x}"[-64:]);db.add(passage);db.flush()
+    claim=Claim(entity_id=entity.id,field=field,value="supported value",source_url=document.source_url,source_type="test",confidence=.95,verification_status=status,extractor="test",evidence_hash=document.content_hash);db.add(claim);db.flush();db.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=.95,supports=True));db.flush();return claim
+
+def test_diligence_check_requires_independent_sources_and_maker_checker():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example Fund",canonical_name="example fund",universe="private_equity");db.add(entity);db.flush();case=open_case(db,entity.id,"private equity","assessment","internal","owner")
+        check=db.scalar(select(CheckResult).where(CheckResult.case_id==case.id,CheckResult.check_code=="legal_identity"))
+        official=_ranked_claim(db,entity,"official_identity","SUPPORTED","S1","official.example",1)
+        lei=_ranked_claim(db,entity,"lei","SPECIALIST_VERIFIED","S2","gleif.org",2)
+        submit_check_evidence(db,check.id,[official.id,lei.id],"researcher","identity sources attached")
+        assert evidence_sufficiency(db,check.id)["sufficient"]
+        adjudicate_check(db,check.id,"PROPOSE_COMPLETE","maker","independent sources satisfy identity procedure","EVIDENCE_COLLECTED")
+        with pytest.raises(CheckAdjudicationError):adjudicate_check(db,check.id,"APPROVE","maker","self approval","REVIEW_PROPOSED")
+        adjudicate_check(db,check.id,"APPROVE","checker","scope and source independence reviewed","REVIEW_PROPOSED")
+        assert check.status=="SPECIALIST_VERIFIED" and verify_ledger(db,"DILIGENCE_CHECK",check.id)["valid"]
+
+def test_check_conflict_blocks_completion_and_claims_must_match_case_entity():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example",canonical_name="example",universe="test");other=Entity(name="Other",canonical_name="other",universe="test");db.add_all([entity,other]);db.flush();case=open_case(db,entity.id,"default","assessment","internal","owner")
+        check=db.scalar(select(CheckResult).where(CheckResult.case_id==case.id,CheckResult.check_code=="legal_identity"));wrong=_ranked_claim(db,other,"official_identity","SUPPORTED","S0","registry.example",3)
+        with pytest.raises(CheckAdjudicationError):submit_check_evidence(db,check.id,[wrong.id],"researcher","wrong entity")
+        right=_ranked_claim(db,entity,"legal_name","SUPPORTED","S0","registry2.example",4);submit_check_evidence(db,check.id,[right.id],"researcher","registry evidence")
+        db.add(ConflictCase(entity_id=entity.id,predicate="legal_identity",materiality="MATERIAL"));db.flush()
+        assert not evidence_sufficiency(db,check.id)["sufficient"]
+        with pytest.raises(CheckAdjudicationError):adjudicate_check(db,check.id,"PROPOSE_COMPLETE","maker","complete","EVIDENCE_COLLECTED")
+
+def test_exceptions_never_produce_green_and_critical_exception_is_red():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example",canonical_name="example",universe="test");db.add(entity);db.flush();case=open_case(db,entity.id,"private equity","assessment","internal","owner")
+        checks=db.scalars(select(CheckResult).where(CheckResult.case_id==case.id)).all()
+        for check in checks:check.status="SPECIALIST_VERIFIED"
+        mandate=next(x for x in checks if x.check_code=="mandate");mandate.status="EVIDENCE_COLLECTED"
+        adjudicate_check(db,mandate.id,"PROPOSE_EXCEPTION","maker","mandate document unavailable; restrict use to identity only","EVIDENCE_COLLECTED")
+        adjudicate_check(db,mandate.id,"APPROVE_EXCEPTION","checker","exception and decision restriction accepted","EXCEPTION_PROPOSED")
+        assert readiness(db,case.id)["state"]=="AMBER"
+        identity=next(x for x in checks if x.check_code=="legal_identity");identity.status="EVIDENCE_COLLECTED"
+        adjudicate_check(db,identity.id,"PROPOSE_EXCEPTION","maker","legal identity unavailable; no transaction use","EVIDENCE_COLLECTED")
+        adjudicate_check(db,identity.id,"APPROVE_EXCEPTION","checker","critical exception accepted only to document blocker","EXCEPTION_PROPOSED")
+        assert readiness(db,case.id)["state"]=="RED"

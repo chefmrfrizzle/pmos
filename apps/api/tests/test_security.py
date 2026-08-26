@@ -11,7 +11,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from apps.api.app.security import Principal,authenticate_private_request,authorize
-from pmos_research.db import Base,Entity
+from pmos_research.db import Base,Claim,ClaimEvidence,Entity,EvidencePassage,SourceDocument
+from pmos_research.diligence import open_case
 
 def request(host="127.0.0.1"):
     value=Request({"type":"http","method":"GET","path":"/","headers":[],"client":(host,1234),"server":("test",80),"scheme":"http","query_string":b""})
@@ -77,3 +78,27 @@ def test_api_enforces_object_scope_and_permissions(monkeypatch):
     token=_oidc_token(monkeypatch,{"https://pmos.example/roles":["unknown" ]})
     with pytest.raises(HTTPException) as error:authenticate_private_request(request(),"Bearer "+token,None)
     assert error.value.status_code==403
+
+def test_authenticated_case_check_workflow_enforces_maker_checker(monkeypatch):
+    import apps.api.app.main as main
+    engine=create_engine("sqlite://",connect_args={"check_same_thread":False},poolclass=StaticPool);Base.metadata.create_all(engine);factory=sessionmaker(bind=engine,expire_on_commit=False)
+    with factory() as db:
+        entity=Entity(name="Registry Example",canonical_name="registry example",universe="venture_capital");db.add(entity);db.flush();case=open_case(db,entity.id,"default","assessment","internal","owner")
+        check=next(x for x in db.query(main.CheckResult).filter_by(case_id=case.id).all() if x.check_code=="legal_identity")
+        document=SourceDocument(entity_id=entity.id,publisher="registry",publisher_independence_group="registry",source_rank="S0",source_type="registry",source_url="https://registry.example/record",content_hash="1"*64);db.add(document);db.flush()
+        passage=EvidencePassage(document_id=document.id,section="record",passage="legal identity",passage_hash="2"*64);db.add(passage);db.flush()
+        claim=Claim(entity_id=entity.id,field="legal_name",value=entity.name,source_url=document.source_url,source_type="registry",confidence=1,verification_status="SUPPORTED",extractor="test",evidence_hash=document.content_hash);db.add(claim);db.flush();db.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=1,supports=True));db.commit();case_id=case.id;check_id=check.id;claim_id=claim.id
+    monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
+    maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"checks:read","checks:write"}),frozenset({"venture_capital"}),"oidc","maker-request")
+    main.app.dependency_overrides[authenticate_private_request]=lambda:maker
+    try:
+        with TestClient(main.app) as client:
+            assert client.get(f"/diligence-cases/{case_id}").status_code==200
+            response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/evidence",json={"claim_ids":[claim_id],"rationale":"Attach dispositive registry evidence"});assert response.status_code==200
+            response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"PROPOSE_COMPLETE","rationale":"Registry evidence directly establishes identity","expected_status":"EVIDENCE_COLLECTED"});assert response.status_code==200
+            assert client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"APPROVE","rationale":"Attempt unauthorized approval","expected_status":"REVIEW_PROPOSED"}).status_code==403
+        checker=Principal("checker",frozenset({"REVIEWER"}),frozenset({"checks:read","checks:approve"}),frozenset({"venture_capital"}),"oidc","checker-request")
+        main.app.dependency_overrides[authenticate_private_request]=lambda:checker
+        with TestClient(main.app) as client:
+            response=client.post(f"/diligence-cases/{case_id}/checks/{check_id}/actions",json={"action":"APPROVE","rationale":"Independent reviewer confirms source and scope","expected_status":"REVIEW_PROPOSED"});assert response.status_code==200 and response.json()["status"]=="SPECIALIST_VERIFIED"
+    finally:main.app.dependency_overrides.clear()
