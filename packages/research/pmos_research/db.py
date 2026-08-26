@@ -351,6 +351,54 @@ class DiligenceCase(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class PrivateSaleCase(Base):
+    __tablename__ = "private_sale_cases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    seller_entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), nullable=True, index=True)
+    purpose: Mapped[str] = mapped_column(Text)
+    permitted_use: Mapped[str] = mapped_column(Text)
+    jurisdiction: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    owner: Mapped[str] = mapped_column(String(150))
+    status: Mapped[str] = mapped_column(String(40), default="EVIDENCE_COLLECTION", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class PrivateSaleGate(Base):
+    __tablename__ = "private_sale_gates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("private_sale_cases.id"), index=True)
+    gate_code: Mapped[str] = mapped_column(String(80), index=True)
+    fact_class: Mapped[str] = mapped_column(String(80), index=True)
+    critical: Mapped[bool] = mapped_column(Boolean, default=True)
+    counsel_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(40), default="NOT_STARTED", index=True)
+    exception_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("case_id", "gate_code", name="uq_private_sale_gate"),)
+
+class PrivateSaleGateEvidence(Base):
+    __tablename__ = "private_sale_gate_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gate_id: Mapped[int] = mapped_column(ForeignKey("private_sale_gates.id"), index=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), index=True)
+    added_by: Mapped[str] = mapped_column(String(150))
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("gate_id", "claim_id", name="uq_private_sale_gate_claim"),)
+
+class PrivateSaleGateEvent(Base):
+    __tablename__ = "private_sale_gate_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    gate_id: Mapped[int] = mapped_column(ForeignKey("private_sale_gates.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    actor_role: Mapped[str] = mapped_column(String(40))
+    rationale: Mapped[str] = mapped_column(Text)
+    evidence_package_hash: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class SourceDocument(Base):
     __tablename__ = "source_documents"
     id: Mapped[int] = mapped_column(primary_key=True)

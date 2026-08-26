@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -24,6 +24,8 @@ from pmos_research.change_review import ChangeReviewError,adjudicate_change,buil
 from pmos_research.export_governance import ExportGovernanceError,adjudicate_export_request,request_dossier_export
 from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship
 from pmos_research.relationship_review import build_relationship_packet
+from pmos_research.private_sale import PrivateSaleError,adjudicate_gate,open_private_sale,submit_gate_evidence
+from pmos_research.private_sale_review import build_private_sale_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -49,6 +51,21 @@ class RelationshipProposalRequest(BaseModel):
 
 class RelationshipActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=20)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:Optional[str]=Field(default=None,max_length=40)
+
+class PrivateSaleCreateRequest(BaseModel):
+    asset_entity_id:int=Field(gt=0)
+    seller_entity_id:Optional[int]=Field(default=None,gt=0)
+    purpose:str=Field(min_length=3,max_length=500)
+    permitted_use:str=Field(min_length=3,max_length=500)
+    jurisdiction:Optional[str]=Field(default=None,max_length=10)
+
+class PrivateSaleEvidenceRequest(BaseModel):
+    claim_ids:list[int]=Field(min_length=1,max_length=50)
+
+class PrivateSaleGateActionRequest(BaseModel):
+    action:str=Field(min_length=6,max_length=30)
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:Optional[str]=Field(default=None,max_length=40)
 
@@ -189,6 +206,48 @@ def relationship_review_action(assertion_id:int,body:RelationshipActionRequest,p
         try:assertion=adjudicate_relationship(s,assertion_id,body.action,principal.subject,body.rationale,body.expected_status)
         except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc))
         result=build_relationship_packet(s,assertion.id);audit_access(s,principal,"RELATIONSHIP_REVIEW_ACTION",{"assertion_id":assertion.id,"action":body.action.upper(),"resulting_state":assertion.status});s.commit();return result
+
+@app.post("/private-sales")
+def private_sale_create(body:PrivateSaleCreateRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        asset=s.get(Entity,body.asset_entity_id);seller=s.get(Entity,body.seller_entity_id) if body.seller_entity_id else None
+        if not asset or (body.seller_entity_id and not seller):raise HTTPException(status_code=404,detail="private-sale entity not found")
+        authorize(principal,"private_sales:write",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},asset.universe,body.permitted_use)
+        if seller:authorize(principal,"private_sales:write",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},seller.universe,body.permitted_use)
+        try:case=open_private_sale(s,asset.id,seller.id if seller else None,body.purpose,body.permitted_use,principal.subject,body.jurisdiction)
+        except PrivateSaleError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_private_sale_packet(s,case.id);audit_access(s,principal,"PRIVATE_SALE_OPENED",{"case_id":case.id,"asset_entity_id":asset.id,"seller_entity_id":seller.id if seller else None});s.commit();return packet
+
+@app.get("/private-sales/{case_id}")
+def private_sale_detail(case_id:int,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_private_sale_packet(s,case_id);authorize(principal,"private_sales:read",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["asset"]["universe"],packet["permitted_use"])
+        if packet["seller"]:authorize(principal,"private_sales:read",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["seller"]["universe"],packet["permitted_use"])
+        audit_access(s,principal,"PRIVATE_SALE_READ",{"case_id":case_id});s.commit();return packet
+
+@app.post("/private-sales/{case_id}/gates/{gate_id}/evidence")
+def private_sale_gate_evidence(case_id:int,gate_id:int,body:PrivateSaleEvidenceRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_private_sale_packet(s,case_id);gate=s.get(PrivateSaleGate,gate_id)
+        if not gate or gate.case_id!=case_id:raise HTTPException(status_code=404,detail="private-sale gate not found")
+        authorize(principal,"private_sales:write",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["asset"]["universe"],packet["permitted_use"])
+        if packet["seller"]:authorize(principal,"private_sales:write",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"},packet["seller"]["universe"],packet["permitted_use"])
+        try:submit_gate_evidence(s,gate.id,body.claim_ids,principal.subject)
+        except PrivateSaleError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        result=build_private_sale_packet(s,case_id);audit_access(s,principal,"PRIVATE_SALE_GATE_EVIDENCE",{"case_id":case_id,"gate_id":gate_id,"claim_count":len(set(body.claim_ids))});s.commit();return result
+
+@app.post("/private-sales/{case_id}/gates/{gate_id}/actions")
+def private_sale_gate_action(case_id:int,gate_id:int,body:PrivateSaleGateActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper() in {"APPROVE","APPROVE_EXCEPTION"};permission="private_sales:approve" if approval else "private_sales:write";roles={"REVIEWER","COUNSEL","ADMIN"} if approval else {"RESEARCHER","REVIEWER","COUNSEL","ADMIN"}
+    with SessionLocal() as s:
+        packet=build_private_sale_packet(s,case_id);gate=s.get(PrivateSaleGate,gate_id)
+        if not gate or gate.case_id!=case_id:raise HTTPException(status_code=404,detail="private-sale gate not found")
+        authorize(principal,permission,roles,packet["asset"]["universe"],packet["permitted_use"])
+        if packet["seller"]:authorize(principal,permission,roles,packet["seller"]["universe"],packet["permitted_use"])
+        actor_role=next((x for x in ("ADMIN","COUNSEL","REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:adjudicate_gate(s,gate.id,body.action,principal.subject,actor_role,body.rationale,body.expected_status)
+        except PrivateSaleError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        result=build_private_sale_packet(s,case_id);audit_access(s,principal,"PRIVATE_SALE_GATE_ACTION",{"case_id":case_id,"gate_id":gate_id,"action":body.action.upper(),"resulting_state":gate.status});s.commit();return result
 
 @app.get("/evidence-review/passages")
 def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",predicate:Optional[str]=None,min_confidence:float=Query(0,ge=0,le=1),evidence_state:Optional[str]=None,limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):

@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from pmos_research.control_assurance import persist_assurance_run,run_control_assurance
-from pmos_research.db import Base,Claim,ClaimEvidence,ControlAssuranceRun,Entity,EvidencePassage,IdentityCluster,IdentityMembership,ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument
+from pmos_research.db import Base,Claim,ClaimEvidence,ControlAssuranceRun,Entity,EvidencePassage,IdentityCluster,IdentityMembership,PrivateSaleCase,PrivateSaleGate,ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument
 
 def _clean_fixture(db):
     entity=Entity(name="Private Example Name",canonical_name="private example name",universe="test");db.add(entity);db.flush()
@@ -43,4 +43,11 @@ def test_control_assurance_rejects_retry_state_without_attempt_history():
         entity=Entity(name="Institution",canonical_name="institution",universe="test");db.add(entity);db.flush()
         db.add(ResearchSourceCandidate(entity_id=entity.id,source_url="https://official.example",source_domain="official.example",document_type="LEGAL_IDENTITY",target_predicates_json='["legal_identity"]',discovered_from_url="https://official.example",status="RETRY_REQUIRED"));db.flush()
         result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="source_retrieval_attempt_integrity")
+        assert result["status"]=="FAIL" and control["exceptions"]==1
+
+def test_control_assurance_rejects_private_sale_pass_without_review_history():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        asset=Entity(name="Asset",canonical_name="asset",universe="asset");db.add(asset);db.flush();case=PrivateSaleCase(asset_entity_id=asset.id,purpose="assessment",permitted_use="diligence",owner="owner");db.add(case);db.flush();db.add(PrivateSaleGate(case_id=case.id,gate_code="provenance",fact_class="provenance",critical=True,status="PASS"));db.flush()
+        result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="private_sale_gate_maker_checker_and_evidence")
         assert result["status"]=="FAIL" and control["exceptions"]==1

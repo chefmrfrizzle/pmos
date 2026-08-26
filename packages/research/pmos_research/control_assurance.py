@@ -10,13 +10,14 @@ from .case_checks import evidence_sufficiency
 from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
-    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,RelationshipAdjudicationEvent,
+    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
     SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,
 )
 from .relationship_controls import relationship_evidence_controls
+from .private_sale import gate_sufficiency
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -80,6 +81,22 @@ def run_control_assurance(session)->dict:
         controls=relationship_evidence_controls(session,assertion);events=session.scalars(select(RelationshipAdjudicationEvent).where(RelationshipAdjudicationEvent.relationship_assertion_id==assertion.id).order_by(RelationshipAdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
         bad+=not assertion.reviewed_by or assertion.proposed_by==assertion.reviewed_by or not controls["verification_eligible"] or not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=approval.evidence_package_hash or proposal.evidence_package_hash!=controls["evidence_package_hash"]
     controls.append(_control("verified_relationship_evidence_and_independence",len(relationships),bad))
+
+    completed_gates=session.scalars(select(PrivateSaleGate).where(PrivateSaleGate.status.in_({"PASS","PASS_WITH_EXCEPTION","BLOCKED"}))).all();bad=0
+    for gate in completed_gates:
+        events=session.scalars(select(PrivateSaleGateEvent).where(PrivateSaleGateEvent.gate_id==gate.id).order_by(PrivateSaleGateEvent.id)).all()
+        if gate.status=="PASS":
+            proposal=next((x for x in events if x.action=="PROPOSE_PASS"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
+            try:sufficient=gate_sufficiency(session,gate.id)["sufficient"]
+            except Exception:sufficient=False
+            current=gate_sufficiency(session,gate.id)["evidence_package_hash"]
+            bad+=not proposal or not approval or proposal.actor==approval.actor or not sufficient or proposal.evidence_package_hash!=approval.evidence_package_hash or approval.evidence_package_hash!=current or (gate.counsel_required and approval.actor_role not in {"COUNSEL","ADMIN"})
+        elif gate.status=="PASS_WITH_EXCEPTION":
+            proposal=next((x for x in events if x.action=="PROPOSE_EXCEPTION"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE_EXCEPTION"),None)
+            current=gate_sufficiency(session,gate.id)["evidence_package_hash"]
+            bad+=not proposal or not approval or proposal.actor==approval.actor or not gate.exception_reason or proposal.evidence_package_hash!=approval.evidence_package_hash or approval.evidence_package_hash!=current or (gate.counsel_required and approval.actor_role not in {"COUNSEL","ADMIN"})
+        else:bad+=not any(x.action=="MARK_BLOCKED" for x in events)
+    controls.append(_control("private_sale_gate_maker_checker_and_evidence",len(completed_gates),bad))
 
     completed=session.scalars(select(CheckResult).where(CheckResult.status.in_({"SPECIALIST_VERIFIED","CORROBORATED"}))).all();bad=0
     for check in completed:
