@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from .audit_ledger import append_ledger_event
 
 from .db import (
     CaseAuditEvent,
@@ -83,6 +84,7 @@ def append_audit_event(session, case_id: int, actor: str, action: str, prior: di
         rationale=rationale,
     )
     session.add(event)
+    append_ledger_event(session,"DILIGENCE_CASE",case_id,actor.strip(),"CASE_ACTOR",action,{"prior":prior,"resulting":resulting,"rationale":rationale})
     return event
 
 

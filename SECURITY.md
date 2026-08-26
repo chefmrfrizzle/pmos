@@ -10,7 +10,11 @@ Entity and claim routes fail closed unless `PMOS_ENABLE_PRIVATE_API=1`, accept l
 
 ## Adjudication and exports
 
-High-risk case approval requires independent maker-checker review. Material identity, ownership, regulatory, authority, fund-manager, or domicile conflicts block readiness. Case actions append actor, before/after state, rationale, and server timestamp; a production database must additionally deny application-level update/delete on the audit ledger and add tamper-evident chaining.
+High-risk case approval requires independent maker-checker review. Material identity, ownership, regulatory, authority, fund-manager, or domicile conflicts block readiness. Case actions append actor, before/after state, rationale, and server timestamp. Production must preserve these controls while moving identity from local development tokens to authenticated server-side principals.
+
+The local ledger is SHA-256 hash-chained per decision stream and SQLite installs fail-closed triggers that reject ledger updates and deletes. `scripts/verify_audit_ledger.py` replays every reachable stream and fails on changed payloads, broken predecessor hashes, or changed event hashes. Production PostgreSQL must additionally isolate ledger insert permissions from operational roles, sign periodic roots with an external key, and export roots to independent retention.
+
+Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.
 
 Exports resolve beneath `PMOS_PRIVATE_ROOT`, reject repository and symlink escape, neutralize spreadsheet formulas, use owner-only permissions, and emit a classified hash manifest. Authorization, approval, expiry, and encrypted delivery remain mandatory before multi-user production use.
 

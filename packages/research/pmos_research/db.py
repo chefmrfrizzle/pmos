@@ -363,6 +363,54 @@ class EntityAlias(Base):
     claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
     __table_args__ = (UniqueConstraint("entity_id", "alias", "alias_type", name="uq_entity_alias"),)
 
+class AuditLedgerEntry(Base):
+    __tablename__ = "audit_ledger_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stream_type: Mapped[str] = mapped_column(String(40), index=True)
+    stream_id: Mapped[str] = mapped_column(String(100), index=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    actor_id: Mapped[str] = mapped_column(String(150), index=True)
+    actor_role: Mapped[str] = mapped_column(String(80))
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    previous_hash: Mapped[str] = mapped_column(String(64))
+    event_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    correlation_id: Mapped[str] = mapped_column(String(100), index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (UniqueConstraint("stream_type", "stream_id", "sequence", name="uq_audit_stream_sequence"),)
+
+class RelationshipAssertion(Base):
+    __tablename__ = "relationship_assertions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    to_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    relation_type: Mapped[str] = mapped_column(String(80), index=True)
+    jurisdiction: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    effective_from: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    effective_to: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sensitive: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    proposed_by: Mapped[str] = mapped_column(String(150))
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    review_rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class RelationshipAssertionEvidence(Base):
+    __tablename__ = "relationship_assertion_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    relationship_assertion_id: Mapped[int] = mapped_column(ForeignKey("relationship_assertions.id"), index=True)
+    source_document_id: Mapped[int] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    evidence_passage_id: Mapped[Optional[int]] = mapped_column(ForeignKey("evidence_passages.id"), nullable=True)
+    __table_args__ = (UniqueConstraint("relationship_assertion_id", "source_document_id", "evidence_passage_id", name="uq_relationship_assertion_evidence"),)
+
+def install_ledger_guards(target_engine) -> None:
+    if target_engine.dialect.name=="sqlite":
+        with target_engine.begin() as connection:
+            connection.exec_driver_sql("CREATE TRIGGER IF NOT EXISTS audit_ledger_no_update BEFORE UPDATE ON audit_ledger_entries BEGIN SELECT RAISE(ABORT, 'audit ledger is append-only'); END")
+            connection.exec_driver_sql("CREATE TRIGGER IF NOT EXISTS audit_ledger_no_delete BEFORE DELETE ON audit_ledger_entries BEGIN SELECT RAISE(ABORT, 'audit ledger is append-only'); END")
+
 def init_db() -> None:
     PRIVATE_ROOT.mkdir(parents=True,exist_ok=True)
     Base.metadata.create_all(engine)
+    install_ledger_guards(engine)

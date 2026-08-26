@@ -11,6 +11,7 @@ from .db import (
     ResolutionDecision, ReviewQueueItem,
 )
 from .fact_extraction import identity_supported
+from .audit_ledger import append_ledger_event
 
 PRIORITY_TYPES={"venture capital","private equity","corporate venture capital","family office","asset manager","hedge fund","government","limited partner","pension","sovereign wealth"}
 
@@ -81,6 +82,7 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
                 membership.status=cluster.status;membership.decided_by=reviewer;membership.decided_at=datetime.now(timezone.utc)
     result=allowed[prior][action];now=datetime.now(timezone.utc)
     session.add(AdjudicationEvent(queue_item_id=item.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale,evidence_hash=digest))
+    append_ledger_event(session,"IDENTITY_REVIEW",item.id,reviewer,"REVIEWER",action,{"prior_state":prior,"resulting_state":result,"evidence_hash":digest,"rationale":rationale})
     item.status=result;item.updated_at=now
     session.flush()
     return {"queue_item_id":item.id,"prior_state":prior,"resulting_state":result,"version":_version(item)}

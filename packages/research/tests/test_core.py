@@ -1,14 +1,17 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import detect_header, import_csv
-from pmos_research.db import Base, AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, IdentityCluster, IdentityMembership, ImportBatch, RawImportRow, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase
+from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, Contact, CorroborationJob, Entity, IdentityCluster, IdentityMembership, ImportBatch, RawImportRow, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
 from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
+from pmos_research.audit_ledger import append_ledger_event,verify_ledger
+from pmos_research.relationship_controls import propose_relationship,verify_relationship
 from pmos_research.adapters.official_web import OfficialWebAdapter, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_supported
 import pytest
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, func, select, update
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import sessionmaker
 
 def test_canonicalize():
@@ -215,3 +218,55 @@ def test_case_corroboration_queues_public_registry_only():
         db.flush();result=enqueue_case_corroboration(db)
         assert result["queued"]==1
         job=db.scalar(select(CorroborationJob));assert job.entity_id==public.id
+
+def test_audit_ledger_detects_payload_tampering():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        append_ledger_event(db,"TEST","1","actor","REVIEWER","OPENED",{"status":"OPEN"},"correlation-1")
+        append_ledger_event(db,"TEST","1","actor-2","REVIEWER","CLOSED",{"status":"CLOSED"},"correlation-2")
+        assert verify_ledger(db,"TEST","1")=={"valid":True,"entries":2,"errors":[]}
+        first=db.scalar(select(AuditLedgerEntry).where(AuditLedgerEntry.sequence==1));first.payload_json='{"status":"FORGED"}'
+        result=verify_ledger(db,"TEST","1")
+        assert not result["valid"]
+        assert {x["error"] for x in result["errors"]}>={"event_hash_mismatch"}
+
+def test_sqlite_ledger_guards_reject_update_and_delete():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);install_ledger_guards(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entry=append_ledger_event(db,"TEST","1","actor","REVIEWER","OPENED",{"status":"OPEN"});db.commit()
+        with pytest.raises(DatabaseError):db.execute(update(AuditLedgerEntry).where(AuditLedgerEntry.id==entry.id).values(payload_json="{}"));db.commit()
+        db.rollback()
+        with pytest.raises(DatabaseError):db.delete(entry);db.commit()
+
+def _relationship_fixture(db,ranks):
+    source=Entity(name="Source",canonical_name="source",universe="test");target=Entity(name="Target",canonical_name="target",universe="test")
+    db.add_all([source,target]);db.flush();documents=[]
+    offset=db.scalar(select(func.count()).select_from(SourceDocument)) or 0
+    for index,(rank,group) in enumerate(ranks,offset+1):
+        document=SourceDocument(entity_id=source.id,publisher=group,publisher_independence_group=group,source_rank=rank,source_type="registry",source_url=f"https://source{index}.example",content_hash=f"{index:064x}"[-64:])
+        db.add(document);documents.append(document)
+    db.flush();return source,target,documents
+
+def test_sensitive_relationship_requires_dispositive_primary_source_and_independent_review():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        source,target,documents=_relationship_fixture(db,[("S1","official-site")])
+        assertion=propose_relationship(db,source.id,target.id,"CONTROLS","maker",[documents[0].id],"GB")
+        assert assertion.status=="HUMAN_REVIEW_REQUIRED" and assertion.sensitive
+        with pytest.raises(ValueError):verify_relationship(db,assertion.id,"maker","self approval")
+        with pytest.raises(ValueError):verify_relationship(db,assertion.id,"checker","official site is not dispositive ownership evidence")
+        assert assertion.status=="HUMAN_REVIEW_REQUIRED"
+
+def test_relationship_verification_accepts_s0_or_independent_corroboration():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        source,target,documents=_relationship_fixture(db,[("S0","companies-house")])
+        sensitive=propose_relationship(db,source.id,target.id,"OWNS","maker",[documents[0].id],"GB")
+        verify_relationship(db,sensitive.id,"checker","registry instrument directly records ownership")
+        assert sensitive.status=="SPECIALIST_VERIFIED"
+        assert verify_ledger(db,"RELATIONSHIP_ASSERTION",sensitive.id)["valid"]
+    with factory() as db:
+        source,target,documents=_relationship_fixture(db,[("S1","annual-report"),("S2","market-infrastructure")])
+        ordinary=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in documents])
+        verify_relationship(db,ordinary.id,"checker","independent sources corroborate the advisory relationship")
+        assert ordinary.status=="SPECIALIST_VERIFIED"

@@ -11,3 +11,7 @@ Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `
 `IdentityCluster` and `IdentityMembership` represent proposed, accepted, or rejected canonicalization without deleting source entities. `EntityAlias` retains sourced names. Institutional structures distinguish legal entities and vehicles and preserve metric type, currency, basis, and date rather than collapsing AUM, AUA, NAV, commitments, target close, and final close.
 
 An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.
+
+`RelationshipAssertion` is the controlled graph-edge model. It retains effective dates, jurisdiction, sensitivity, proposer/reviewer separation, review rationale, and links to source documents and exact passages. Sensitive ownership/control/trustee edges require dispositive primary evidence; graph display must never treat a legacy or candidate edge as specialist-verified.
+
+`AuditLedgerEntry` is an append-only, per-stream hash chain containing authenticated actor ID/role, action, canonical payload, correlation ID, server timestamp, predecessor hash, and event hash. Identity, diligence-case, and relationship decisions write separate replayable streams. SQLite guards reject updates/deletes; chain verification detects altered payloads or predecessor links.
