@@ -41,6 +41,8 @@ The private assurance runner verifies ledger integrity, exact evidence chains, p
 
 Passage adjudication revalidates the evidence chain at decision time rather than relying only on scheduled assurance. Claim-producing actions require a valid passage hash, matching valid snapshot hash, exact passage containment, eligible first-party rank, and current freshness. Open material conflicts block normal support. Broken evidence can still be rejected or deferred, preventing integrity failures from trapping the review queue.
 
+Relationship edges use the same fail-closed principle. Only enumerated predicates are accepted; exact passage hashes must belong to documents scoped to one of the reviewed entities. Proposal records a deterministic evidence-package hash. Approval recomputes it, enforces maker-checker separation and freshness, and applies stricter S0 requirements to sensitive ownership, control, beneficial-owner, and trustee edges. A changed package cannot be approved, and document-only citations are insufficient.
+
 Passage review is private-by-default, role/action authorized, universe-scoped, and audited. The API never accepts a free-standing machine assertion: claim values must already occur in the immutable evidence passage. Maker-checker separation and exact-value comparison prevent self-approval and evidence substitution. Material contradictions route to a conflict record instead of silently creating a supported fact.
 
 Claim-to-check routing is also private, universe-scoped, state-checked, and audited. The router validates entity scope and exact predicate equality again at decision time. Only supported-or-better claims may be attached, and attachment cannot transition a diligence check directly to a completed or verified state.

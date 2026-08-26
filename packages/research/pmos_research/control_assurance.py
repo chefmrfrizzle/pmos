@@ -10,13 +10,13 @@ from .case_checks import evidence_sufficiency
 from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
-    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,
+    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
-    RelationshipAssertionEvidence,ResearchDocumentSnapshot,
+    ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
     SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,
 )
-from .relationship_controls import QUALIFYING_CORROBORATION
+from .relationship_controls import relationship_evidence_controls
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -77,9 +77,8 @@ def run_control_assurance(session)->dict:
 
     relationships=session.scalars(select(RelationshipAssertion).where(RelationshipAssertion.status=="SPECIALIST_VERIFIED")).all();bad=0
     for assertion in relationships:
-        documents=session.scalars(select(SourceDocument).join(RelationshipAssertionEvidence,RelationshipAssertionEvidence.source_document_id==SourceDocument.id).where(RelationshipAssertionEvidence.relationship_assertion_id==assertion.id)).all();ranks={x.source_rank for x in documents};groups={x.publisher_independence_group for x in documents if x.source_rank in QUALIFYING_CORROBORATION}
-        sufficient="S0" in ranks if assertion.sensitive else "S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}))
-        bad+=not assertion.reviewed_by or assertion.proposed_by==assertion.reviewed_by or not sufficient
+        controls=relationship_evidence_controls(session,assertion);events=session.scalars(select(RelationshipAdjudicationEvent).where(RelationshipAdjudicationEvent.relationship_assertion_id==assertion.id).order_by(RelationshipAdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
+        bad+=not assertion.reviewed_by or assertion.proposed_by==assertion.reviewed_by or not controls["verification_eligible"] or not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=approval.evidence_package_hash or proposal.evidence_package_hash!=controls["evidence_package_hash"]
     controls.append(_control("verified_relationship_evidence_and_independence",len(relationships),bad))
 
     completed=session.scalars(select(CheckResult).where(CheckResult.status.in_({"SPECIALIST_VERIFIED","CORROBORATED"}))).all();bad=0

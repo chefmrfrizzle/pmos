@@ -6,14 +6,14 @@ from pmos_research.adjudication import AdjudicationInputError, StaleReviewError,
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
 from pmos_research.audit_ledger import append_ledger_event,verify_ledger
-from pmos_research.relationship_controls import propose_relationship,verify_relationship
+from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship,verify_relationship
 from pmos_research.registry_research import assess_lei_candidate,persist_lei_candidate
 from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.backup import BackupSafetyError,create_private_backup,restore_private_backup,sha256_file,verify_backup_manifest,verify_sqlite_database
 from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooLarge, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
-import pytest
+import hashlib,pytest
 import httpx
 import csv
 from sqlalchemy import create_engine, func, select, update
@@ -332,18 +332,18 @@ def test_sqlite_ledger_guards_reject_update_and_delete():
 
 def _relationship_fixture(db,ranks):
     source=Entity(name="Source",canonical_name="source",universe="test");target=Entity(name="Target",canonical_name="target",universe="test")
-    db.add_all([source,target]);db.flush();documents=[]
+    db.add_all([source,target]);db.flush();passages=[]
     offset=db.scalar(select(func.count()).select_from(SourceDocument)) or 0
     for index,(rank,group) in enumerate(ranks,offset+1):
         document=SourceDocument(entity_id=source.id,publisher=group,publisher_independence_group=group,source_rank=rank,source_type="registry",source_url=f"https://source{index}.example",content_hash=f"{index:064x}"[-64:])
-        db.add(document);documents.append(document)
-    db.flush();return source,target,documents
+        db.add(document);db.flush();text=f"Source {index} states the relationship between Source and Target.";digest=hashlib.sha256(text.encode()).hexdigest();passage=EvidencePassage(document_id=document.id,section="relationship",passage=text,passage_hash=digest);db.add(passage);passages.append(passage)
+    db.flush();return source,target,passages
 
 def test_sensitive_relationship_requires_dispositive_primary_source_and_independent_review():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        source,target,documents=_relationship_fixture(db,[("S1","official-site")])
-        assertion=propose_relationship(db,source.id,target.id,"CONTROLS","maker",[documents[0].id],"GB")
+        source,target,passages=_relationship_fixture(db,[("S1","official-site")])
+        assertion=propose_relationship(db,source.id,target.id,"CONTROLS","maker",[passages[0].id],"GB")
         assert assertion.status=="HUMAN_REVIEW_REQUIRED" and assertion.sensitive
         with pytest.raises(ValueError):verify_relationship(db,assertion.id,"maker","self approval")
         with pytest.raises(ValueError):verify_relationship(db,assertion.id,"checker","official site is not dispositive ownership evidence")
@@ -352,16 +352,25 @@ def test_sensitive_relationship_requires_dispositive_primary_source_and_independ
 def test_relationship_verification_accepts_s0_or_independent_corroboration():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        source,target,documents=_relationship_fixture(db,[("S0","companies-house")])
-        sensitive=propose_relationship(db,source.id,target.id,"OWNS","maker",[documents[0].id],"GB")
+        source,target,passages=_relationship_fixture(db,[("S0","companies-house")])
+        sensitive=propose_relationship(db,source.id,target.id,"OWNS","maker",[passages[0].id],"GB")
         verify_relationship(db,sensitive.id,"checker","registry instrument directly records ownership")
         assert sensitive.status=="SPECIALIST_VERIFIED"
         assert verify_ledger(db,"RELATIONSHIP_ASSERTION",sensitive.id)["valid"]
     with factory() as db:
-        source,target,documents=_relationship_fixture(db,[("S1","annual-report"),("S2","market-infrastructure")])
-        ordinary=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in documents])
+        source,target,passages=_relationship_fixture(db,[("S1","annual-report"),("S2","market-infrastructure")])
+        ordinary=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in passages])
         verify_relationship(db,ordinary.id,"checker","independent sources corroborate the advisory relationship")
         assert ordinary.status=="SPECIALIST_VERIFIED"
+
+def test_relationship_rejects_unknown_predicates_and_changed_evidence_package():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        source,target,passages=_relationship_fixture(db,[("S0","registry")])
+        with pytest.raises(ValueError,match="unsupported relationship type"):propose_relationship(db,source.id,target.id,"MADE_UP_EDGE","maker",[passages[0].id])
+        assertion=propose_relationship(db,source.id,target.id,"CONTROLS","maker",[passages[0].id]);passages[0].passage_hash="0"*64;db.flush()
+        with pytest.raises(ValueError,match="evidence package changed"):adjudicate_relationship(db,assertion.id,"APPROVE","checker","Independent review cannot approve altered evidence",assertion.status)
+        assert assertion.status=="HUMAN_REVIEW_REQUIRED"
 
 def _lei_record(**overrides):
     value={"lei":"549300EXAMPLE0000001","legal_name":"Example Capital Limited","entity_status":"ACTIVE","jurisdiction":"CA","legal_address_country":"CA","legal_form_id":"8888","registration_authority_id":"RA000071","registration_authority_entity_id":"12345","lei_registration_status":"ISSUED","initial_registration_date":"2020-01-01","last_update_date":"2026-01-01","next_renewal_date":"2027-01-01","record_url":"https://api.gleif.org/api/v1/lei-records/549300EXAMPLE0000001","content_hash":"e"*64}

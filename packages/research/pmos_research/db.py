@@ -556,6 +556,18 @@ class RelationshipAssertionEvidence(Base):
     evidence_passage_id: Mapped[Optional[int]] = mapped_column(ForeignKey("evidence_passages.id"), nullable=True)
     __table_args__ = (UniqueConstraint("relationship_assertion_id", "source_document_id", "evidence_passage_id", name="uq_relationship_assertion_evidence"),)
 
+class RelationshipAdjudicationEvent(Base):
+    __tablename__ = "relationship_adjudication_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    relationship_assertion_id: Mapped[int] = mapped_column(ForeignKey("relationship_assertions.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    evidence_package_hash: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class RegistryIdentifierCandidate(Base):
     __tablename__ = "registry_identifier_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)

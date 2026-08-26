@@ -12,7 +12,7 @@ Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `
 
 An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.
 
-`RelationshipAssertion` is the controlled graph-edge model. It retains effective dates, jurisdiction, sensitivity, proposer/reviewer separation, review rationale, and links to source documents and exact passages. Sensitive ownership/control/trustee edges require dispositive primary evidence; graph display must never treat a legacy or candidate edge as specialist-verified.
+`RelationshipAssertion` is the controlled graph-edge model. It retains effective dates, jurisdiction, sensitivity, proposer/reviewer separation, review rationale, and links to source documents and exact passages. `RelationshipAdjudicationEvent` preserves proposal, deferral, rejection, and approval history with a deterministic evidence-package hash. Sensitive ownership/control/trustee edges require dispositive primary evidence; graph display must never treat a legacy or candidate edge as specialist-verified. Confidence is derived transparently from source rank, independence, freshness, scope, and passage integrity.
 
 `AuditLedgerEntry` is an append-only, per-stream hash chain containing authenticated actor ID/role, action, canonical payload, correlation ID, server timestamp, predecessor hash, and event hash. Identity, diligence-case, and relationship decisions write separate replayable streams. SQLite guards reject updates/deletes; chain verification detects altered payloads or predecessor links.
 

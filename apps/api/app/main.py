@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -22,6 +22,8 @@ from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
 from pmos_research.evidence_route_review import build_route_packet
 from pmos_research.change_review import ChangeReviewError,adjudicate_change,build_change_packet
 from pmos_research.export_governance import ExportGovernanceError,adjudicate_export_request,request_dossier_export
+from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship
+from pmos_research.relationship_review import build_relationship_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -37,6 +39,18 @@ class IdentityActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     evidence_ids:list[int]=Field(default_factory=list,max_length=25)
     expected_version:str=Field(min_length=10,max_length=80)
+
+class RelationshipProposalRequest(BaseModel):
+    from_entity_id:int=Field(gt=0)
+    to_entity_id:int=Field(gt=0)
+    relation_type:str=Field(min_length=3,max_length=80)
+    evidence_passage_ids:list[int]=Field(min_length=1,max_length=25)
+    jurisdiction:Optional[str]=Field(default=None,max_length=10)
+
+class RelationshipActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=20)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expected_status:Optional[str]=Field(default=None,max_length=40)
 
 class PassageActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=40)
@@ -140,6 +154,41 @@ def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Prin
         except StaleReviewError as exc:raise HTTPException(status_code=409,detail=str(exc))
         except AdjudicationInputError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
+
+@app.post("/relationship-review")
+def relationship_proposal(body:RelationshipProposalRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        source=s.get(Entity,body.from_entity_id);target=s.get(Entity,body.to_entity_id)
+        if not source or not target:raise HTTPException(status_code=404,detail="relationship entity not found")
+        authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},source.universe);authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},target.universe)
+        try:assertion=propose_relationship(s,source.id,target.id,body.relation_type,principal.subject,body.evidence_passage_ids,body.jurisdiction)
+        except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_relationship_packet(s,assertion.id);audit_access(s,principal,"RELATIONSHIP_PROPOSED",{"assertion_id":assertion.id,"relation_type":assertion.relation_type,"evidence_count":len(set(body.evidence_passage_ids))});s.commit();return packet
+
+@app.get("/relationship-review")
+def relationship_review_queue(status:str="HUMAN_REVIEW_REQUIRED",relation_type:Optional[str]=None,sensitive:Optional[bool]=None,min_confidence:float=Query(0,ge=0,le=1),limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"relationships:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        query=s.query(RelationshipAssertion).filter(RelationshipAssertion.status==status.upper())
+        if relation_type:query=query.filter(RelationshipAssertion.relation_type==relation_type.upper())
+        if sensitive is not None:query=query.filter(RelationshipAssertion.sensitive.is_(sensitive))
+        rows=[]
+        for assertion in query.order_by(RelationshipAssertion.created_at,RelationshipAssertion.id).limit(limit*10):
+            packet=build_relationship_packet(s,assertion.id);universes={packet["source_entity"]["universe"],packet["target_entity"]["universe"]}
+            if "*" not in principal.universes and not universes.issubset(principal.universes):continue
+            if packet["evidence_controls"]["evidence_confidence"]<min_confidence:continue
+            rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"RELATIONSHIP_REVIEW_LISTED",{"status":status.upper(),"relation_type":relation_type.upper() if relation_type else None,"sensitive":sensitive,"min_confidence":min_confidence,"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/relationship-review/{assertion_id}/actions")
+def relationship_review_action(assertion_id:int,body:RelationshipActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper()=="APPROVE";permission="relationships:approve" if approval else "relationships:write";roles={"REVIEWER","COUNSEL","ADMIN"} if approval else {"RESEARCHER","REVIEWER","COUNSEL","ADMIN"}
+    with SessionLocal() as s:
+        packet=build_relationship_packet(s,assertion_id);authorize(principal,permission,roles,packet["source_entity"]["universe"]);authorize(principal,permission,roles,packet["target_entity"]["universe"])
+        try:assertion=adjudicate_relationship(s,assertion_id,body.action,principal.subject,body.rationale,body.expected_status)
+        except ValueError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        result=build_relationship_packet(s,assertion.id);audit_access(s,principal,"RELATIONSHIP_REVIEW_ACTION",{"assertion_id":assertion.id,"action":body.action.upper(),"resulting_state":assertion.status});s.commit();return result
 
 @app.get("/evidence-review/passages")
 def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",predicate:Optional[str]=None,min_confidence:float=Query(0,ge=0,le=1),evidence_state:Optional[str]=None,limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
