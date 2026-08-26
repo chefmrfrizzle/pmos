@@ -2,22 +2,50 @@ from __future__ import annotations
 import hashlib, ipaddress, json, os, socket, subprocess, sys, time
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
-import httpx
+import httpcore,httpx
 from bs4 import BeautifulSoup
 from pmos_research.runtime_isolation import ResourceLimits,apply_resource_limits,sanitized_environment
 
 class UnsafeResearchTarget(ValueError):pass
 class ResponseTooLarge(ValueError):pass
 
+def _public_addresses(resolver,host:str,port:int)->list[str]:
+    try:addresses={item[4][0].split("%")[0] for item in resolver(host,port,type=socket.SOCK_STREAM)}
+    except OSError as exc:raise UnsafeResearchTarget("target DNS resolution failed") from exc
+    if not addresses:raise UnsafeResearchTarget("target has no resolved address")
+    parsed=[]
+    for address in addresses:
+        ip=ipaddress.ip_address(address)
+        if not ip.is_global:raise UnsafeResearchTarget("non-public target address is forbidden")
+        parsed.append(ip)
+    return [str(x) for x in sorted(parsed,key=lambda value:(value.version,int(value)))]
+
+class PinnedNetworkBackend(httpcore.NetworkBackend):
+    """Resolve, validate, and connect to the same public IP to prevent DNS rebinding."""
+    def __init__(self,resolver,backend=None):self.resolver=resolver;self.backend=backend or httpcore.SyncBackend()
+    def connect_tcp(self,host,port,timeout=None,local_address=None,socket_options=None):
+        normalized=host.decode("ascii") if isinstance(host,bytes) else str(host);pinned=_public_addresses(self.resolver,normalized,int(port))[0]
+        return self.backend.connect_tcp(pinned,port,timeout=timeout,local_address=local_address,socket_options=socket_options)
+    def connect_unix_socket(self,*args,**kwargs):raise UnsafeResearchTarget("unix sockets are forbidden")
+    def sleep(self,seconds):return self.backend.sleep(seconds)
+
+class PinnedHTTPTransport(httpx.HTTPTransport):
+    def __init__(self,resolver,**kwargs):
+        super().__init__(**kwargs)
+        pool=getattr(self,"_pool",None)
+        if pool is None or not hasattr(pool,"_network_backend"):raise RuntimeError("HTTP transport cannot install fail-closed DNS pinning")
+        pool._network_backend=PinnedNetworkBackend(resolver)
+
 class OfficialWebAdapter:
     def __init__(self,resolver=None):
+        self.resolver=resolver or socket.getaddrinfo
         self.user_agent=os.getenv("PMOS_USER_AGENT","PMOSResearch/0.2 (+public-evidence; respectful crawler)")
         self.delay=max(.5,min(float(os.getenv("PMOS_REQUEST_DELAY_SECONDS","1.5")),30))
         self.max_bytes=max(65536,min(int(os.getenv("PMOS_MAX_RESPONSE_BYTES","2000000")),10000000))
         self.max_pdf_bytes=max(65536,min(int(os.getenv("PMOS_MAX_PDF_BYTES","10000000")),20000000))
         timeout=httpx.Timeout(20,connect=10,read=20,write=10,pool=5)
-        self.client=httpx.Client(headers={"User-Agent":self.user_agent,"Accept":"text/html,application/xhtml+xml,application/pdf"},follow_redirects=False,timeout=timeout,trust_env=False)
-        self.resolver=resolver or socket.getaddrinfo
+        transport=PinnedHTTPTransport(self.resolver,trust_env=False,retries=0)
+        self.client=httpx.Client(headers={"User-Agent":self.user_agent,"Accept":"text/html,application/xhtml+xml,application/pdf"},follow_redirects=False,timeout=timeout,trust_env=False,transport=transport)
         self._robots={};self._last_request={}
 
     def _validate_url(self,url:str)->str:
@@ -29,12 +57,7 @@ class OfficialWebAdapter:
         host=parsed.hostname.rstrip(".").casefold()
         if host in {"localhost","localhost.localdomain"} or host.endswith((".local",".internal",".home",".lan")):
             raise UnsafeResearchTarget("local network targets are forbidden")
-        try:addresses={item[4][0].split("%")[0] for item in self.resolver(host,parsed.port or (443 if parsed.scheme=="https" else 80),type=socket.SOCK_STREAM)}
-        except OSError as exc:raise UnsafeResearchTarget("target DNS resolution failed") from exc
-        if not addresses:raise UnsafeResearchTarget("target has no resolved address")
-        for address in addresses:
-            ip=ipaddress.ip_address(address)
-            if not ip.is_global:raise UnsafeResearchTarget("non-public target address is forbidden")
+        _public_addresses(self.resolver,host,parsed.port or (443 if parsed.scheme=="https" else 80))
         return url
 
     def _wait(self,host:str):

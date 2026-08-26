@@ -12,7 +12,7 @@ from pmos_research.registry_research import assess_lei_candidate,persist_lei_can
 from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.backup import BackupSafetyError,create_private_backup,restore_private_backup,sha256_file,verify_backup_manifest,verify_sqlite_database
-from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooLarge, UnsafeResearchTarget
+from pmos_research.adapters.official_web import OfficialWebAdapter,PinnedNetworkBackend,ResponseTooLarge,UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
 import hashlib,pytest
 import httpx
@@ -127,6 +127,20 @@ def test_official_adapter_rejects_private_network_targets():
 def test_official_adapter_rejects_alternate_ports():
     adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",8443))])
     with pytest.raises(UnsafeResearchTarget):adapter._validate_url("https://example.test:8443/")
+
+def test_pinned_network_backend_connects_to_the_validated_ip_and_blocks_rebinding():
+    class Backend:
+        def __init__(self):self.host=None
+        def connect_tcp(self,host,port,**kwargs):self.host=host;return "stream"
+        def sleep(self,seconds):pass
+    backend=Backend();resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))];pinned=PinnedNetworkBackend(resolver,backend)
+    assert pinned.connect_tcp("example.test",443)=="stream" and backend.host=="93.184.216.34"
+    rebinding=PinnedNetworkBackend(lambda *args,**kwargs:[(None,None,None,None,("127.0.0.1",443))],backend)
+    with pytest.raises(UnsafeResearchTarget,match="non-public"):rebinding.connect_tcp("example.test",443)
+
+def test_dns_answer_mixing_public_and_private_addresses_fails_closed():
+    adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443)),(None,None,None,None,("169.254.169.254",443))])
+    with pytest.raises(UnsafeResearchTarget,match="non-public"):adapter._validate_url("https://example.test/")
 
 def test_official_adapter_streams_with_decompressed_size_cap():
     adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))]);adapter.max_bytes=65536;adapter.delay=.5
