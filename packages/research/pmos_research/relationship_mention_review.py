@@ -33,6 +33,16 @@ def freeze_mention_review_batch(session,actor:str,universe:str,status:str="ENTIT
     for row in rows:session.add(RelationshipMentionReviewBatchItem(batch_id=batch.id,**row))
     session.flush();append_ledger_event(session,"RELATIONSHIP_MENTION_REVIEW_BATCH",batch.id,actor.strip(),"ADMIN","BATCH_FROZEN",{"manifest_hash":digest,"item_count":len(rows),"criteria":criteria});return batch
 
+def freeze_pending_mention_batches(session,actor:str="mention-batch-worker",status:str="ENTITY_RESOLUTION_REQUIRED",limit_per_universe:int=100)->dict:
+    status=status.upper()
+    if status not in {"ENTITY_RESOLUTION_REQUIRED","TARGET_PROPOSED"} or not 1<=limit_per_universe<=100:raise RelationshipMentionReviewError("invalid pending mention batch criteria")
+    universes=sorted({source.universe for mention,source in session.execute(select(RelationshipMentionCandidate,Entity).join(Entity,Entity.id==RelationshipMentionCandidate.from_entity_id).where(RelationshipMentionCandidate.status==status)).all()})
+    batches=[]
+    for universe in universes:
+        batch=freeze_mention_review_batch(session,actor,universe,status,limit_per_universe)
+        if batch.item_count:batches.append({"batch_id":batch.id,"item_count":batch.item_count})
+    return {"classification":"PMOS PRIVATE AGGREGATE MENTION BATCH PREPARATION — NO RECORD VALUES","status":status,"universe_count":len(universes),"batch_count":len(batches),"item_count":sum(x["item_count"] for x in batches),"batches":batches}
+
 def build_mention_review_batch_packet(session,batch_id:int)->dict:
     batch=session.get(RelationshipMentionReviewBatch,batch_id)
     if not batch:raise RelationshipMentionReviewError("unknown mention review batch")

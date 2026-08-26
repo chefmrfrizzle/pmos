@@ -5,7 +5,7 @@ from sqlalchemy import create_engine,select
 from sqlalchemy.orm import sessionmaker
 
 from pmos_research.db import Base,Entity,EvidencePassage,RelationshipMentionCandidate,RelationshipMentionReviewBatchItem,SourceDocument
-from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,validate_mention_review_decision
+from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,freeze_pending_mention_batches,validate_mention_review_decision
 from pmos_research.relationship_research import discover_relationship_candidates
 
 def _mention(db):
@@ -26,3 +26,8 @@ def test_expired_mention_assignment_fails_closed_and_is_marked_expired():
         mention=_mention(db);batch=freeze_mention_review_batch(db,"admin","venture_capital");assignment=assign_mention_reviewer(db,batch.id,"maker","RESEARCHER","admin","Maker assigned to frozen mention queue");assignment.expires_at=datetime.now(timezone.utc)-timedelta(seconds=1);db.flush()
         with pytest.raises(RelationshipMentionReviewError,match="unexpired"):validate_mention_review_decision(db,batch.id,mention,"maker","RESEARCHER",False)
         assert assignment.status=="EXPIRED"
+
+def test_pending_mention_batch_preparation_emits_aggregate_only_counts():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        _mention(db);result=freeze_pending_mention_batches(db);assert result["batch_count"]==1 and result["item_count"]==1 and result["universe_count"]==1 and set(result)=={"classification","status","universe_count","batch_count","item_count","batches"}
