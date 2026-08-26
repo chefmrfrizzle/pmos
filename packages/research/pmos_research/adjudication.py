@@ -3,11 +3,87 @@ import json
 from collections import Counter
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+import hashlib
 from sqlalchemy import select
-from .db import Claim, CorroborationJob, Entity, Evidence, RawImportRow, ResolutionDecision, ReviewQueueItem
+from .db import (
+    AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, Evidence,
+    DiligenceCase, IdentityCluster, IdentityMembership, RawImportRow,
+    ResolutionDecision, ReviewQueueItem,
+)
 from .fact_extraction import identity_supported
 
 PRIORITY_TYPES={"venture capital","private equity","corporate venture capital","family office","asset manager","hedge fund","government","limited partner","pension","sovereign wealth"}
+
+class AdjudicationInputError(ValueError):pass
+class StaleReviewError(RuntimeError):pass
+
+def _version(item:ReviewQueueItem)->str:
+    value=item.updated_at
+    if value.tzinfo is None:value=value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+def _evidence_digest(session,evidence_ids)->str|None:
+    ids=sorted(set(int(x) for x in evidence_ids))
+    if not ids:return None
+    rows=session.scalars(select(Evidence).where(Evidence.id.in_(ids))).all()
+    if len(rows)!=len(ids):raise AdjudicationInputError("all evidence IDs must exist")
+    return hashlib.sha256("|".join(sorted(x.content_hash for x in rows)).encode()).hexdigest()
+
+def _create_proposed_cluster(session,item:ReviewQueueItem,decision:ResolutionDecision,reviewer:str):
+    raw=session.get(RawImportRow,decision.raw_row_id)
+    if item.queue_type=="ENTITY" and raw and raw.entity_id and decision.candidate_entity_id:
+        candidate=session.get(Entity,decision.candidate_entity_id);source=session.get(Entity,raw.entity_id)
+        cluster=IdentityCluster(identity_type="ENTITY",canonical_label=candidate.name,status="PROPOSED",created_by=reviewer)
+        session.add(cluster);session.flush()
+        for entity,confidence,basis in ((candidate,1.0,["existing candidate"]),(source,decision.confidence,json.loads(decision.reasons_json))):
+            session.add(IdentityMembership(cluster_id=cluster.id,entity_id=entity.id,status="PROPOSED",match_basis_json=json.dumps(basis),confidence=confidence))
+        return cluster
+    if item.queue_type=="CONTACT" and raw and raw.contact_id and decision.candidate_contact_id:
+        candidate=session.get(Contact,decision.candidate_contact_id);source=session.get(Contact,raw.contact_id)
+        cluster=IdentityCluster(identity_type="PERSON",canonical_label=candidate.name,status="PROPOSED",created_by=reviewer)
+        session.add(cluster);session.flush()
+        for contact,confidence,basis in ((candidate,1.0,["existing candidate"]),(source,decision.confidence,json.loads(decision.reasons_json))):
+            session.add(IdentityMembership(cluster_id=cluster.id,contact_id=contact.id,status="PROPOSED",match_basis_json=json.dumps(basis),confidence=confidence))
+        return cluster
+    raise AdjudicationInputError("queue item does not contain two identity candidates")
+
+def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,evidence_ids=(),expected_version:str|None=None):
+    """Append a reviewer decision; never overwrite source entities or prior events."""
+    if not reviewer.strip() or not rationale.strip():raise AdjudicationInputError("reviewer and rationale are required")
+    item=session.get(ReviewQueueItem,queue_item_id)
+    if not item:raise AdjudicationInputError("unknown queue item")
+    current_version=_version(item)
+    if expected_version is not None and expected_version!=current_version:raise StaleReviewError("review item changed; reload before deciding")
+    action=action.upper();prior=item.status
+    allowed={
+        "PENDING":{"PROPOSE_MATCH":"PROPOSED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT","DEFER":"DEFERRED"},
+        "DEFERRED":{"PROPOSE_MATCH":"PROPOSED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT"},
+        "PROPOSED":{"APPROVE_MATCH":"ACCEPTED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT"},
+    }
+    if action not in allowed.get(prior,{}):raise AdjudicationInputError(f"invalid transition {prior} -> {action}")
+    prior_events=session.scalars(select(AdjudicationEvent).where(AdjudicationEvent.queue_item_id==item.id).order_by(AdjudicationEvent.id)).all()
+    if action=="APPROVE_MATCH":
+        proposer=next((x.reviewer for x in reversed(prior_events) if x.action=="PROPOSE_MATCH"),None)
+        if not proposer or proposer==reviewer:raise AdjudicationInputError("approval requires a different reviewer from the proposer")
+    digest=_evidence_digest(session,evidence_ids)
+    decision=session.get(ResolutionDecision,item.resolution_decision_id)
+    if action=="PROPOSE_MATCH":_create_proposed_cluster(session,item,decision,reviewer)
+    if action in {"APPROVE_MATCH","REJECT_MATCH","MARK_CONFLICT"}:
+        cluster=session.scalar(select(IdentityCluster).join(IdentityMembership).where(
+            IdentityMembership.entity_id.in_([x for x in [decision.candidate_entity_id,session.get(RawImportRow,decision.raw_row_id).entity_id] if x]) if item.queue_type=="ENTITY" else
+            IdentityMembership.contact_id.in_([x for x in [decision.candidate_contact_id,session.get(RawImportRow,decision.raw_row_id).contact_id] if x]),
+            IdentityCluster.status=="PROPOSED",
+        ).order_by(IdentityCluster.id.desc()))
+        if action=="APPROVE_MATCH" and not cluster:raise AdjudicationInputError("no proposed identity cluster exists")
+        if cluster:
+            cluster.status="ACCEPTED" if action=="APPROVE_MATCH" else "REJECTED"
+            for membership in session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)):
+                membership.status=cluster.status;membership.decided_by=reviewer;membership.decided_at=datetime.now(timezone.utc)
+    result=allowed[prior][action];now=datetime.now(timezone.utc)
+    session.add(AdjudicationEvent(queue_item_id=item.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale,evidence_hash=digest))
+    item.status=result;item.updated_at=now
+    session.flush()
+    return {"queue_item_id":item.id,"prior_state":prior,"resulting_state":result,"version":_version(item)}
 
 def _domain(url:str|None)->str:
     return urlparse(url or "").netloc.lower().split(":")[0].removeprefix("www.")
@@ -55,6 +131,18 @@ def enqueue_corroboration(session,limit:int=0)->Counter:
         session.add(CorroborationJob(entity_id=entity.id,source_url=source_url,source_domain=domain,status="PENDING",checkpoint_json="{}"))
         counts["queued"]+=1
         if limit and counts["queued"]>=limit:break
+    session.flush();return counts
+
+def enqueue_case_corroboration(session)->Counter:
+    """Queue only public-registry entities already selected into diligence cases."""
+    counts=Counter();existing={(x.entity_id,x.source_url) for x in session.scalars(select(CorroborationJob)).all()}
+    entities=session.scalars(select(Entity).join(DiligenceCase,DiligenceCase.entity_id==Entity.id).where(Entity.universe!="imported_private").order_by(Entity.universe,Entity.canonical_name,Entity.id)).all()
+    for entity in entities:
+        source_url=normalize_public_url(entity.official_url);domain=_domain(source_url)
+        if not domain:counts["invalid_url"]+=1;continue
+        if (entity.id,source_url) in existing:counts["existing"]+=1;continue
+        session.add(CorroborationJob(entity_id=entity.id,source_url=source_url,source_domain=domain,status="PENDING",checkpoint_json="{}"))
+        existing.add((entity.id,source_url));counts["queued"]+=1
     session.flush();return counts
 
 def queue_summary(session)->dict:

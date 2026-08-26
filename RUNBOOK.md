@@ -5,3 +5,39 @@ Bootstrap with `make bootstrap`, seed with `make seed`, and run locally with `ma
 For a private import, set `PMOS_PRIVATE_ROOT` and `PMOS_DB_URL` to paths outside the repository, then run `python scripts/import_private.py --input-dir /external/private/imports`. Use a new database URL for schema revisions instead of overwriting an earlier datastore. The importer is idempotent by file hash, isolates source-file failures, and prints aggregate reconciliation only. Review every non-exact resolution before promotion.
 
 Prepare persistent review and corroboration queues with `python scripts/prepare_adjudication_queue.py`. Run first-party work in bounded batches with `python scripts/run_corroboration_jobs.py --limit 10`. Robots denial or retrieval failure is a recorded outcome, never a reason to bypass controls or mark a claim verified.
+
+## Public release
+
+Build before the final check so compiled browser bundles and source maps are inspected:
+
+```bash
+cd apps/web && npm run build && cd ../..
+./.venv/bin/python scripts/public_release_check.py
+```
+
+Run the safety checker before staging, every commit, every push, and every deployment. It checks the current tree, reachable Git history, and generated browser assets.
+
+## Identity shadow audit and adjudication
+
+Before promoting historical exact matches under a newer resolver policy, run the read-only aggregate audit against the configured private datastore:
+
+```bash
+PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
+  ./.venv/bin/python scripts/audit_identity_matches.py
+```
+
+The command outputs counts and reason categories only. It does not print identity values or mutate decisions. Any `requires_review` result enters adjudication; historical decisions are never rewritten.
+
+Accepted identity matches use two stages: `PROPOSE_MATCH` by the maker, then `APPROVE_MATCH` by a different reviewer. Rejections, conflicts, evidence references, rationale, and prior/resulting states remain append-only events. A stale version must be reloaded instead of overwritten.
+
+## Bounded institutional cohort
+
+Open review-first cases across allocator and manager structures without verifying or merging any identity:
+
+```bash
+PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
+  ./.venv/bin/python scripts/initialize_diligence_cohort.py --per-universe 2
+```
+
+Cases begin with mandatory checks in `NOT_STARTED`. Creation is intake, not diligence completion or endorsement.
+The initializer also queues official-domain corroboration only for the selected public-registry cohort. Run those jobs in bounded batches; retrieval alone never completes a diligence check.

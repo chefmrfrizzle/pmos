@@ -1,9 +1,10 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import detect_header, import_csv
-from pmos_research.db import Base, Claim, Contact, CorroborationJob, Entity, ImportBatch, RawImportRow, ResolutionDecision, CheckResult, ConflictCase
-from pmos_research.adjudication import run_corroboration_job
+from pmos_research.db import Base, AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, IdentityCluster, IdentityMembership, ImportBatch, RawImportRow, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase
+from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
+from pmos_research.identity_audit import shadow_audit
 from pmos_research.adapters.official_web import OfficialWebAdapter, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_supported
 import pytest
@@ -156,3 +157,61 @@ def test_material_conflict_blocks_readiness_and_high_risk_requires_maker_checker
         assert readiness(db,case.id)=={"state":"RED","missing_checks":[],"material_conflicts":["fund_manager"]}
         with pytest.raises(ValueError):specialist_signoff(db,case.id,"maker","reviewer","APPROVE","looks good")
         specialist_signoff(db,case.id,"independent-reviewer","reviewer","ESCALATE","manager conflict remains")
+
+def _review_fixture(db):
+    batch=ImportBatch(source_file="synthetic.csv",source_sha256="c"*64);db.add(batch);db.flush()
+    existing=Entity(name="Example Capital",canonical_name="example capital",universe="test",country="CA",official_url="https://example.test")
+    source=Entity(name="Example Capital Inc.",canonical_name="example capital",universe="imported_private",country="CA",official_url="https://example.test")
+    db.add_all([existing,source]);db.flush()
+    raw=RawImportRow(batch_id=batch.id,source_file="synthetic.csv",sheet_name="CSV",source_row_number=2,row_hash="d"*64,original_row_json="[]",normalized_row_json='{"investor name":"Example Capital Inc.","country":"CA","website":"https://example.test"}',disposition="imported",entity_id=source.id)
+    db.add(raw);db.flush()
+    decision=ResolutionDecision(raw_row_id=raw.id,candidate_entity_id=existing.id,state="PROBABLE_MATCH",confidence=.92,reasons_json='["strong name match"]')
+    db.add(decision);db.flush()
+    item=ReviewQueueItem(resolution_decision_id=decision.id,queue_type="ENTITY",priority=85,reasons_json='["review"]')
+    db.add(item);db.flush();return item
+
+def test_adjudication_is_two_stage_and_preserves_source_entities():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        item=_review_fixture(db);version=item.updated_at.replace(tzinfo=timezone.utc).isoformat() if item.updated_at.tzinfo is None else item.updated_at.isoformat()
+        result=adjudicate(db,item.id,"PROPOSE_MATCH","maker","same official domain and jurisdiction",expected_version=version)
+        assert result["resulting_state"]=="PROPOSED"
+        with pytest.raises(AdjudicationInputError):adjudicate(db,item.id,"APPROVE_MATCH","maker","self approval")
+        adjudicate(db,item.id,"APPROVE_MATCH","checker","independent review completed",expected_version=result["version"])
+        assert item.status=="ACCEPTED"
+        assert db.scalar(select(func.count()).select_from(Entity))==2
+        assert db.scalar(select(func.count()).select_from(IdentityCluster).where(IdentityCluster.status=="ACCEPTED"))==1
+        assert db.scalar(select(func.count()).select_from(IdentityMembership).where(IdentityMembership.status=="ACCEPTED"))==2
+        assert db.scalar(select(func.count()).select_from(AdjudicationEvent))==2
+
+def test_adjudication_rejects_stale_review_version():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        item=_review_fixture(db)
+        with pytest.raises(StaleReviewError):adjudicate(db,item.id,"DEFER","reviewer","needs more evidence",expected_version="stale")
+        assert item.status=="PENDING"
+
+def test_shadow_audit_only_retains_exact_matches_meeting_strict_identity_controls():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        item=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id);decision.state="EXACT_MATCH"
+        result=shadow_audit(db)
+        assert result["total_prior_exact"]==1
+        assert result["still_exact"]==1
+        raw=db.get(RawImportRow,decision.raw_row_id);raw.normalized_row_json='{"investor name":"Example Capital Inc.","country":"CA"}'
+        result=shadow_audit(db)
+        assert result["still_exact"]==0
+        assert result["reasons"]["review:official_domain_missing_or_mismatch"]==1
+
+def test_case_corroboration_queues_public_registry_only():
+    from pmos_research.adjudication import enqueue_case_corroboration
+    from pmos_research.db import DiligenceCase
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        public=Entity(name="Public Example",canonical_name="public example",universe="venture_capital",official_url="https://public.example")
+        private=Entity(name="Private Example",canonical_name="private example",universe="imported_private",official_url="https://private.example")
+        db.add_all([public,private]);db.flush()
+        for entity in (public,private):db.add(DiligenceCase(entity_id=entity.id,purpose="test",permitted_use="test",owner="test"))
+        db.flush();result=enqueue_case_corroboration(db)
+        assert result["queued"]==1
+        job=db.scalar(select(CorroborationJob));assert job.entity_id==public.id
