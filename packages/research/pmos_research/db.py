@@ -198,6 +198,19 @@ class ResearchSourceCandidate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("entity_id", "source_url", name="uq_entity_research_source"),)
 
+class SourceRetrievalAttempt(Base):
+    __tablename__ = "source_retrieval_attempts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_candidate_id: Mapped[int] = mapped_column(ForeignKey("research_source_candidates.id"), index=True)
+    attempt_number: Mapped[int] = mapped_column(Integer)
+    outcome: Mapped[str] = mapped_column(String(60), index=True)
+    error_class: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    retryable: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("source_candidate_id", "attempt_number", name="uq_source_retrieval_attempt"),)
+
 class ResearchDocumentSnapshot(Base):
     __tablename__ = "research_document_snapshots"
     id: Mapped[int] = mapped_column(primary_key=True)

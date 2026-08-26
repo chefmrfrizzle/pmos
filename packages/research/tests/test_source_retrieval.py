@@ -1,8 +1,8 @@
 from sqlalchemy import create_engine,select,func
 from sqlalchemy.orm import sessionmaker
 
-from pmos_research.db import Base,Claim,Entity,EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
-from pmos_research.source_retrieval import extract_predicate_passages,persist_retrieved_candidate,record_retrieval_outcome
+from pmos_research.db import Base,Claim,Entity,EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument,SourceRetrievalAttempt
+from pmos_research.source_retrieval import classify_http_status,extract_predicate_passages,persist_retrieved_candidate,record_retrieval_attempt,record_retrieval_outcome
 
 def test_candidate_retrieval_queues_exact_passages_without_creating_claims():
     text="Our investment strategy focuses on private markets. We are regulated by the Example Authority."
@@ -40,3 +40,14 @@ def test_generic_words_do_not_create_passage_candidates():
 
 def test_investing_in_phrase_is_a_review_candidate_but_generic_investments_are_not():
     assert extract_predicate_passages("We focus on investing in climate technology.",["mandate"])[0]["matched_term"]=="investing in"
+
+def test_retrieval_attempts_use_bounded_backoff_and_exhaust_after_three_attempts():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Institution",canonical_name="institution",universe="test");db.add(entity);db.flush()
+        candidate=ResearchSourceCandidate(entity_id=entity.id,source_url="https://official.example/contact",source_domain="official.example",document_type="CONTACT_LOCATION",target_predicates_json='["address"]',discovered_from_url="https://official.example",status="RETRY_REQUIRED");db.add(candidate);db.flush()
+        first=record_retrieval_attempt(db,candidate,"http_transient_error",True,"HTTPStatusError",503);second=record_retrieval_attempt(db,candidate,"http_transient_error",True,"HTTPStatusError",503);third=record_retrieval_attempt(db,candidate,"http_transient_error",True,"HTTPStatusError",503)
+        assert first.retryable and second.retryable and first.next_attempt_at<second.next_attempt_at
+        assert not third.retryable and third.next_attempt_at is None and candidate.status=="RETRY_EXHAUSTED"
+        assert db.query(SourceRetrievalAttempt).count()==3
+        assert classify_http_status(503)==("http_transient_error",True) and classify_http_status(404)==("http_permanent_error",False)

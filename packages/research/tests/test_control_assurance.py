@@ -36,3 +36,11 @@ def test_control_assurance_detects_identity_membership_in_competing_clusters():
         db.add_all([IdentityMembership(cluster_id=one.id,entity_id=first.id,status="PROPOSED",confidence=1),IdentityMembership(cluster_id=one.id,entity_id=second.id,status="PROPOSED",confidence=.9),IdentityMembership(cluster_id=two.id,entity_id=first.id,status="PROPOSED",confidence=1),IdentityMembership(cluster_id=two.id,entity_id=third.id,status="PROPOSED",confidence=.8)]);db.flush()
         result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="active_identity_pair_exclusivity")
         assert result["status"]=="FAIL" and control["exceptions"]==1
+
+def test_control_assurance_rejects_retry_state_without_attempt_history():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Institution",canonical_name="institution",universe="test");db.add(entity);db.flush()
+        db.add(ResearchSourceCandidate(entity_id=entity.id,source_url="https://official.example",source_domain="official.example",document_type="LEGAL_IDENTITY",target_predicates_json='["legal_identity"]',discovered_from_url="https://official.example",status="RETRY_REQUIRED"));db.flush()
+        result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="source_retrieval_attempt_integrity")
+        assert result["status"]=="FAIL" and control["exceptions"]==1

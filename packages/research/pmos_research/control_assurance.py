@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     RelationshipAssertionEvidence,ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,
+    SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,
 )
 from .relationship_controls import QUALIFYING_CORROBORATION
 
@@ -38,6 +38,16 @@ def run_control_assurance(session)->dict:
 
     passages=session.scalars(select(EvidencePassage)).all();controls.append(_control("evidence_passage_hash_integrity",len(passages),sum(hashlib.sha256(x.passage.encode()).hexdigest()!=x.passage_hash for x in passages)))
     snapshots=session.scalars(select(ResearchDocumentSnapshot)).all();controls.append(_control("research_snapshot_hash_integrity",len(snapshots),sum(hashlib.sha256(x.normalized_text.encode()).hexdigest()!=x.text_hash for x in snapshots)))
+
+    attempts=session.scalars(select(SourceRetrievalAttempt).order_by(SourceRetrievalAttempt.source_candidate_id,SourceRetrievalAttempt.attempt_number)).all();grouped={};bad=0
+    for attempt in attempts:grouped.setdefault(attempt.source_candidate_id,[]).append(attempt)
+    for rows in grouped.values():
+        bad+=([x.attempt_number for x in rows]!=list(range(1,len(rows)+1)))
+        bad+=sum(bool(x.retryable)!=bool(x.next_attempt_at) or (x.retryable and x.attempt_number>=3) for x in rows)
+    retry_candidates=session.scalars(select(ResearchSourceCandidate).where(ResearchSourceCandidate.status=="RETRY_REQUIRED")).all()
+    for candidate in retry_candidates:
+        rows=grouped.get(candidate.id,[]);bad+=not rows or not rows[-1].retryable
+    controls.append(_control("source_retrieval_attempt_integrity",len(attempts)+len(retry_candidates),bad))
 
     accepted=session.scalars(select(IdentityCluster).where(IdentityCluster.status=="ACCEPTED")).all();bad=0
     for cluster in accepted:

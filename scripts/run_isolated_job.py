@@ -14,6 +14,7 @@ JOBS={
     "corroboration":"run_corroboration_jobs.py",
     "source-discovery":"discover_case_sources.py",
     "source-retrieval":"retrieve_source_candidates.py",
+    "source-retry-requeue":"requeue_due_source_retries.py",
     "passage-reextraction":"reextract_passage_candidates.py",
     "pdf-requeue":"requeue_pdf_candidates.py",
     "source-reverification":"reverify_sources.py",

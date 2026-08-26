@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import hashlib,json,re
 from collections import Counter
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 from urllib.parse import urlparse
 
 from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
-from .db import EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument
+from .db import EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument,SourceRetrievalAttempt
 
 PREDICATE_TERMS={
     "legal_identity":("legal name","incorporated","registered as","company number","registered company","legal entity"),
@@ -27,7 +27,24 @@ OUTCOME_STATES={
     "invalid_pdf_signature":"INVALID_PDF",
     "pdf_extraction_failed":"PDF_EXTRACTION_FAILED",
     "pdf_no_extractable_text":"PDF_NO_EXTRACTABLE_TEXT",
+    "http_permanent_error":"HTTP_ERROR_REVIEW_REQUIRED",
+    "http_transient_error":"RETRY_REQUIRED",
+    "persist_failed":"RETRY_REQUIRED",
 }
+
+def classify_http_status(status:int)->tuple[str,bool]:
+    retryable=status in {408,425,429} or status>=500
+    return ("http_transient_error",True) if retryable else ("http_permanent_error",False)
+
+def record_retrieval_attempt(session,candidate:ResearchSourceCandidate,outcome:str,retryable:bool,error_class:str|None=None,http_status:int|None=None,actor:str="research-worker")->SourceRetrievalAttempt:
+    previous=session.scalars(select(SourceRetrievalAttempt).where(SourceRetrievalAttempt.source_candidate_id==candidate.id).order_by(SourceRetrievalAttempt.attempt_number.desc()).limit(1)).first()
+    number=(previous.attempt_number if previous else 0)+1
+    delay=min(24*60,15*(2**(number-1))) if retryable else 0
+    next_at=datetime.now(timezone.utc)+timedelta(minutes=delay) if retryable and number<3 else None
+    attempt=SourceRetrievalAttempt(source_candidate_id=candidate.id,attempt_number=number,outcome=outcome,error_class=error_class,http_status=http_status,retryable=retryable and number<3,next_attempt_at=next_at);session.add(attempt);session.flush()
+    if retryable and number>=3:candidate.status="RETRY_EXHAUSTED";candidate.updated_at=datetime.now(timezone.utc)
+    append_ledger_event(session,"SOURCE_RETRIEVAL_ATTEMPT",attempt.id,actor,"SYSTEM","ATTEMPT_RECORDED",{"source_candidate_id":candidate.id,"attempt_number":number,"outcome":outcome,"error_class":error_class,"http_status":http_status,"retryable":attempt.retryable,"next_attempt_at":next_at.isoformat() if next_at else None})
+    return attempt
 
 def extract_predicate_passages(text:str,predicates:list[str],max_chars:int=700)->list[dict]:
     compact=" ".join((text or "").split());lower=compact.casefold();results=[]

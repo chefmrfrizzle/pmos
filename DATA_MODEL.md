@@ -26,6 +26,8 @@ Identity review packets intentionally exclude `RawImportRow.original_row_json` a
 
 `ResearchSourceCandidate` separates same-domain document discovery from evidence retrieval. It records the discovered URL, source page, document classification, target predicates, deterministic score, and lifecycle state. `ResearchDocumentSnapshot` stores bounded normalized text and a content hash outside the public application. `ResearchPassageCandidate` links an exact immutable passage to one possible predicate and always begins `HUMAN_REVIEW_REQUIRED`. Discovery, retrieval, and passage extraction never create a factual `Claim`.
 
+`SourceRetrievalAttempt` is the append-only operational history for a source candidate. It stores a monotonic attempt number, stable outcome/error class, optional HTTP status, retryability, and bounded next-attempt timestamp. It excludes document bodies, credentials, and raw exception messages. Control assurance verifies sequence continuity and retry-state consistency.
+
 PDF snapshots use the same source/snapshot models as HTML, while each extracted `EvidencePassage.page` preserves its PDF page number. The raw PDF is not stored in the application database or public repository; the source document retains its URL and content-addressed normalized-text snapshot for review.
 
 `SourceChangeEvent` immutably links the prior and resulting document snapshots with both hashes, text similarity, added/removed token counts, detection time, and review state. Unchanged retrievals remain explicit `UNCHANGED` events. Changed sources begin `HUMAN_REVIEW_REQUIRED`. `SourceChangeReviewEvent` preserves acknowledgements, deferrals, and escalations without rewriting either snapshot or changing downstream claims.
