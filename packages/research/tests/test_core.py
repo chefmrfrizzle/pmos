@@ -1,6 +1,6 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
-from pmos_research.importers import detect_header, import_csv
+from pmos_research.importers import ImportSafetyError,detect_header,import_csv,preflight_import
 from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
 from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
@@ -13,6 +13,7 @@ from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooL
 from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
 import pytest
 import httpx
+import csv
 from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import sessionmaker
@@ -82,6 +83,23 @@ def test_import_is_idempotent_by_source_hash(tmp_path):
         assert import_csv(db,source)==2
         db.commit()
         assert import_csv(db,source)==0
+
+def test_import_rejects_oversized_cells_and_row_counts(tmp_path,monkeypatch):
+    import pmos_research.importers as importers
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    oversized=tmp_path/"oversized.csv";oversized.write_text("Name\n"+"x"*1001+"\n",encoding="utf-8")
+    monkeypatch.setattr(importers,"MAX_CELL_CHARS",1000)
+    with factory() as db:
+        with pytest.raises((ImportSafetyError,csv.Error)):import_csv(db,oversized)
+    rows=tmp_path/"rows.csv";rows.write_text("Name\nA\nB\n",encoding="utf-8");monkeypatch.setattr(importers,"MAX_ROWS",2)
+    with factory() as db:
+        with pytest.raises(ImportSafetyError):import_csv(db,rows)
+
+def test_import_rejects_symlinks_and_invalid_xlsx_archives(tmp_path):
+    source=tmp_path/"source.csv";source.write_text("Name\nExample\n",encoding="utf-8");link=tmp_path/"link.csv";link.symlink_to(source)
+    with pytest.raises(ImportSafetyError):preflight_import(link,".csv")
+    fake=tmp_path/"fake.xlsx";fake.write_bytes(b"not a zip")
+    with pytest.raises(ImportSafetyError):preflight_import(fake,".xlsx")
 
 def test_same_email_with_conflicting_person_name_is_not_merged(tmp_path):
     source=tmp_path/"synthetic.csv";source.write_text("Contact Name,Email\nAlex Example,alex@example.test\nDifferent Person,alex@example.test\n",encoding="utf-8")

@@ -11,6 +11,7 @@ if not root.is_dir():raise SystemExit("Input directory does not exist or is not 
 init_db(); total=0; failed=[]
 for p in sorted(root.rglob("*")):
     if p.suffix.lower() not in {".csv",".xlsx"}:continue
+    if p.is_symlink():failed.append((p.name,"symlink import is forbidden"));continue
     resolved=p.resolve()
     if root not in resolved.parents:failed.append((p.name,"path escaped input root"));continue
     with SessionLocal() as s:

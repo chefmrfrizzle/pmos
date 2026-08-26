@@ -443,3 +443,6 @@ def init_db() -> None:
     PRIVATE_ROOT.mkdir(parents=True,exist_ok=True)
     Base.metadata.create_all(engine)
     install_ledger_guards(engine)
+    if engine.dialect.name=="sqlite" and engine.url.database and engine.url.database!=":memory:":
+        database_path=Path(engine.url.database)
+        if database_path.exists():os.chmod(database_path,0o600)

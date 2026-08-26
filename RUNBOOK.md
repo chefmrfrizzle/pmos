@@ -4,6 +4,8 @@ Bootstrap with `make bootstrap`, seed with `make seed`, and run locally with `ma
 
 For a private import, set `PMOS_PRIVATE_ROOT` and `PMOS_DB_URL` to paths outside the repository, then run `python scripts/import_private.py --input-dir /external/private/imports`. Use a new database URL for schema revisions instead of overwriting an earlier datastore. The importer is idempotent by file hash, isolates source-file failures, and prints aggregate reconciliation only. Review every non-exact resolution before promotion.
 
+Import limits can only be adjusted within hard safety ceilings through `PMOS_IMPORT_MAX_FILE_BYTES`, `PMOS_IMPORT_MAX_ROWS`, `PMOS_IMPORT_MAX_COLUMNS`, `PMOS_IMPORT_MAX_CELL_CHARS`, `PMOS_IMPORT_MAX_TOTAL_CELLS`, and `PMOS_IMPORT_MAX_XLSX_UNCOMPRESSED`. Do not raise limits merely to force a malformed source through; quarantine and inspect it first.
+
 Prepare persistent review and corroboration queues with `python scripts/prepare_adjudication_queue.py`. Run first-party work in bounded batches with `python scripts/run_corroboration_jobs.py --limit 10`. Robots denial or retrieval failure is a recorded outcome, never a reason to bypass controls or mark a claim verified.
 
 ## Public release

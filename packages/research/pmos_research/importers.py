@@ -1,5 +1,5 @@
 from __future__ import annotations
-import csv, hashlib, json, re
+import csv, hashlib, json, os, re, zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -18,6 +18,40 @@ COUNTRY_HEADERS=("country / jurisdiction","hq country","jurisdiction","country")
 TYPE_HEADERS=("institution type","investor type","category","segment","type"); URL_HEADERS=("official url","company website","website","url")
 MANDATE_HEADERS=("investment focus","mandate","strategy","description","notes")
 ROLE_INBOXES={"info","contact","office","admin","hello","team","sales","support","enquiries","inquiries","press","media"}
+MAX_FILE_BYTES=max(1024*1024,min(int(os.getenv("PMOS_IMPORT_MAX_FILE_BYTES","100000000")),500000000))
+MAX_ROWS=max(1000,min(int(os.getenv("PMOS_IMPORT_MAX_ROWS","100000")),500000))
+MAX_COLUMNS=max(10,min(int(os.getenv("PMOS_IMPORT_MAX_COLUMNS","500")),2000))
+MAX_CELL_CHARS=max(1000,min(int(os.getenv("PMOS_IMPORT_MAX_CELL_CHARS","100000")),1000000))
+MAX_TOTAL_CELLS=max(10000,min(int(os.getenv("PMOS_IMPORT_MAX_TOTAL_CELLS","5000000")),20000000))
+MAX_XLSX_UNCOMPRESSED=max(10_000_000,min(int(os.getenv("PMOS_IMPORT_MAX_XLSX_UNCOMPRESSED","500000000")),2_000_000_000))
+
+class ImportSafetyError(ValueError):pass
+
+def preflight_import(path:Path,expected_suffix:str)->None:
+    if path.suffix.casefold()!=expected_suffix or not path.is_file() or path.is_symlink():raise ImportSafetyError("unsupported or unsafe import file")
+    size=path.stat().st_size
+    if size<=0 or size>MAX_FILE_BYTES:raise ImportSafetyError("import file size is outside configured limits")
+    if expected_suffix==".xlsx":
+        try:
+            with zipfile.ZipFile(path) as archive:
+                members=archive.infolist()
+                if len(members)>5000:raise ImportSafetyError("workbook has too many archive members")
+                compressed=sum(max(x.compress_size,1) for x in members);uncompressed=sum(x.file_size for x in members)
+                if uncompressed>MAX_XLSX_UNCOMPRESSED or uncompressed/compressed>100:raise ImportSafetyError("workbook archive expansion exceeds configured limits")
+                if any(x.file_size>MAX_XLSX_UNCOMPRESSED//2 or x.flag_bits&1 for x in members):raise ImportSafetyError("workbook contains an unsafe archive member")
+        except zipfile.BadZipFile as exc:raise ImportSafetyError("invalid XLSX archive") from exc
+
+def _bounded_rows(rows):
+    output=[];cells=0
+    for index,row in rows:
+        if len(output)>=MAX_ROWS:raise ImportSafetyError("import row limit exceeded")
+        if len(row)>MAX_COLUMNS:raise ImportSafetyError("import column limit exceeded")
+        cells+=len(row)
+        if cells>MAX_TOTAL_CELLS:raise ImportSafetyError("import cell limit exceeded")
+        values=tuple(row)
+        if any(len(str(value))>MAX_CELL_CHARS for value in values if value is not None):raise ImportSafetyError("import cell size limit exceeded")
+        output.append((index,values))
+    return output
 
 def _val(value)->str:
     if value is None:return ""
@@ -90,15 +124,15 @@ def _materialize(session,path,raw,row):
             contact=candidate
             if entity and contact.entity_id is None:contact.entity_id=entity.id
         else:
-            contact=Contact(entity_id=getattr(entity,"id",None),name=name,title=title or None,email=email or None,phone=phone or None,source=str(path),relationship_stage="not_contacted")
+            contact=Contact(entity_id=getattr(entity,"id",None),name=name,title=title or None,email=email or None,phone=phone or None,source=f"private-import://{path.name}",relationship_stage="not_contacted")
             session.add(contact);session.flush()
         raw.contact_id=contact.id;_decision(session,raw,None,candidate,state,confidence,reasons)
     return "imported"
 
 def _begin(session,path):
-    digest=file_sha256(path); prior=session.scalar(select(ImportBatch).where(ImportBatch.source_sha256==digest,ImportBatch.source_file==str(path)))
+    digest=file_sha256(path); prior=session.scalar(select(ImportBatch).where(ImportBatch.source_sha256==digest).order_by(ImportBatch.id))
     if prior:return prior,False
-    batch=ImportBatch(source_file=str(path),source_sha256=digest);session.add(batch);session.flush();return batch,True
+    batch=ImportBatch(source_file=path.name,source_sha256=digest);session.add(batch);session.flush();return batch,True
 def _record_rows(session,path,batch,sheet,rows:Iterable[tuple[int,Sequence[object]]],header_index):
     buffered=list(rows); header=[]
     if header_index is not None:header=[_header(v) or f"column_{i+1}" for i,v in enumerate(buffered[header_index][1])]
@@ -110,7 +144,7 @@ def _record_rows(session,path,batch,sheet,rows:Iterable[tuple[int,Sequence[objec
         if header_index is not None and ordinal>header_index:normalized={header[i] if i<len(header) else f"column_{i+1}":value for i,value in enumerate(values) if value}
         disposition="header" if ordinal==header_index else "preamble" if header_index is not None and ordinal<header_index else "support_row" if header_index is None else "pending"
         row_hash=_hash({"sheet":sheet,"row":physical,"values":values})
-        raw=RawImportRow(batch_id=batch.id,source_file=str(path),sheet_name=sheet,source_row_number=physical,row_hash=row_hash,original_row_json=_json(values),normalized_row_json=_json(normalized),disposition=disposition)
+        raw=RawImportRow(batch_id=batch.id,source_file=path.name,sheet_name=sheet,source_row_number=physical,row_hash=row_hash,original_row_json=_json(values),normalized_row_json=_json(normalized),disposition=disposition)
         session.add(raw);session.flush()
         if disposition=="pending":disposition=_materialize(session,path,raw,normalized);raw.disposition=disposition
         if disposition=="imported":batch.rows_imported+=1
@@ -118,20 +152,23 @@ def _record_rows(session,path,batch,sheet,rows:Iterable[tuple[int,Sequence[objec
         else:batch.rows_support+=1
     return count
 def import_csv(session,path:Path)->int:
+    preflight_import(path,".csv")
     batch,is_new=_begin(session,path)
     if not is_new:return 0
     try:
-        with path.open("r",encoding="utf-8-sig",errors="replace",newline="") as handle:rows=[(i,row) for i,row in enumerate(csv.reader(handle),1)]
+        csv.field_size_limit(MAX_CELL_CHARS)
+        with path.open("r",encoding="utf-8-sig",errors="replace",newline="") as handle:rows=_bounded_rows((i,row) for i,row in enumerate(csv.reader(handle),1))
         count=_record_rows(session,path,batch,"CSV",rows,0 if rows else None);batch.status="completed";batch.completed_at=datetime.now(timezone.utc);return count
     except Exception as exc:batch.status="failed";batch.error=f"{type(exc).__name__}: {exc}"[:2000];raise
 def import_xlsx(session,path:Path)->int:
+    preflight_import(path,".xlsx")
     batch,is_new=_begin(session,path)
     if not is_new:return 0
     count=0
     try:
         workbook=load_workbook(path,read_only=True,data_only=False)
         for sheet in workbook.worksheets:
-            rows=[(i,tuple(row)) for i,row in enumerate(sheet.iter_rows(values_only=True),1)]
+            rows=_bounded_rows((i,tuple(row)) for i,row in enumerate(sheet.iter_rows(values_only=True),1))
             count+=_record_rows(session,path,batch,sheet.title,rows,detect_header([row for _,row in rows]))
         workbook.close();batch.status="completed";batch.completed_at=datetime.now(timezone.utc);return count
     except Exception as exc:batch.status="failed";batch.error=f"{type(exc).__name__}: {exc}"[:2000];raise
