@@ -293,6 +293,13 @@ class EvidenceReviewBatchItem(Base):
     evidence_state: Mapped[str] = mapped_column(String(30))
     __table_args__ = (UniqueConstraint("batch_id", "passage_candidate_id", name="uq_batch_passage_candidate"),)
 
+class EvidenceReviewDecisionBinding(Base):
+    __tablename__ = "evidence_review_decision_bindings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_batch_items.id"), index=True)
+    adjudication_event_id: Mapped[int] = mapped_column(ForeignKey("research_passage_adjudication_events.id"), unique=True, index=True)
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class ClaimCheckRoutingCandidate(Base):
     __tablename__ = "claim_check_routing_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -10,7 +10,7 @@ from .case_checks import evidence_sufficiency
 from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
-    EvidencePassage,EvidenceReviewBatch,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
+    EvidencePassage,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionBinding,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
@@ -131,7 +131,8 @@ def run_control_assurance(session)->dict:
     for candidate in supported_passages:
         events=session.scalars(select(ResearchPassageAdjudicationEvent).where(ResearchPassageAdjudicationEvent.passage_candidate_id==candidate.id).order_by(ResearchPassageAdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE_SUPPORT"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE_SUPPORT"),None);claim=session.get(Claim,approval.resulting_claim_id) if approval and approval.resulting_claim_id else None
         linked=session.scalar(select(ClaimEvidence.id).where(ClaimEvidence.claim_id==claim.id,ClaimEvidence.passage_id==candidate.evidence_passage_id)) if claim else None
-        bad+=not proposal or not approval or proposal.reviewer==approval.reviewer or proposal.claim_value!=approval.claim_value or not claim or claim.verification_status!="SUPPORTED" or not linked
+        proposal_binding=session.scalar(select(EvidenceReviewDecisionBinding).where(EvidenceReviewDecisionBinding.adjudication_event_id==proposal.id)) if proposal else None;approval_binding=session.scalar(select(EvidenceReviewDecisionBinding).where(EvidenceReviewDecisionBinding.adjudication_event_id==approval.id)) if approval else None;batch_item=session.get(EvidenceReviewBatchItem,proposal_binding.batch_item_id) if proposal_binding else None
+        bad+=not proposal or not approval or proposal.reviewer==approval.reviewer or proposal.claim_value!=approval.claim_value or not claim or claim.verification_status!="SUPPORTED" or not linked or not proposal_binding or not approval_binding or proposal_binding.batch_item_id!=approval_binding.batch_item_id or not batch_item or batch_item.passage_candidate_id!=candidate.id
     controls.append(_control("supported_passage_maker_checker_and_claim_link",len(supported_passages),bad))
 
     reviewed_changes=session.scalars(select(SourceChangeEvent).where(SourceChangeEvent.status.in_({"ACKNOWLEDGED","ESCALATED","DEFERRED"}))).all();bad=0

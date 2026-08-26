@@ -12,6 +12,8 @@ Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `
 
 `EvidenceReviewBatch` freezes a specialist queue selection into a deterministic manifest hash. Its items preserve the candidate status, predicate, passage hash, source-document hash, and eligibility state observed at assignment time. The batch never copies raw private rows and never promotes a claim. Manifest integrity is independently recalculated by the API and control-assurance job.
 
+`EvidenceReviewDecisionBinding` binds each passage adjudication event to its frozen batch item. Support approval is valid only when proposal and approval reference the same item, their evidence hashes still match the source chain, and maker-checker controls pass. This prevents decisions from drifting across assignments or silently inheriting changed evidence.
+
 `IdentityCluster` and `IdentityMembership` represent proposed, accepted, or rejected canonicalization without deleting source entities. `EntityAlias` retains sourced names. Institutional structures distinguish legal entities and vehicles and preserve metric type, currency, basis, and date rather than collapsing AUM, AUA, NAV, commitments, target close, and final close.
 
 An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.

@@ -40,6 +40,8 @@ Each passage packet reports passage/snapshot hash integrity, exact snapshot cont
 
 Before assigning a specialist review session, freeze its population with `python scripts/run_isolated_job.py evidence-review-freeze --universe pensions --limit 50`. The resulting manifest commits to the criteria, candidate state, predicate, passage hash, document hash, and evidence eligibility state. Authenticated reviewers can create or inspect the same object through `POST /evidence-review/batches` and `GET /evidence-review/batches/{id}`. A frozen batch is a review-control artifact, not an approval or factual assertion; assurance fails if its manifest is altered.
 
+Every passage action must include `review_batch_id`. Proposal, rejection, deferral, and conflict actions fail when the current candidate state or evidence hashes differ from the frozen item. Approval must use the exact batch that contains the linked proposal; creating a replacement batch cannot authorize an earlier proposal. Freeze a new batch instead of bypassing a stale assignment.
+
 Approved passage claims create review-only routing candidates when an open case check has the same fact class. Inspect them through `GET /evidence-review/routing`; use the separate `evidence:routing:write` permission to `ATTACH`, `REJECT`, or `DEFER`. Attachment is not check approval. Continue through the check evidence-sufficiency and maker-checker workflow before relying on the case result.
 
 ## Public release

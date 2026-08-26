@@ -8,7 +8,7 @@ from sqlalchemy import select
 from .audit_ledger import append_ledger_event
 from .evidence_routing import queue_claim_routes
 from .db import (
-    Claim,ClaimEvidence,ConflictCase,ConflictMember,EvidencePassage,
+    Claim,ClaimEvidence,ConflictCase,ConflictMember,EvidencePassage,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionBinding,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
     ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument,
 )
@@ -35,6 +35,14 @@ def _context(session,candidate_id:int):
     if not source or not passage or not document or document.entity_id!=source.entity_id:raise PassageAdjudicationError("candidate evidence chain is incomplete or out of scope")
     return candidate,source,passage,document
 
+def _batch_item(session,batch_id:int,candidate,passage,document,action:str):
+    from .evidence_review_batch import build_batch_packet
+    batch=session.get(EvidenceReviewBatch,batch_id);item=session.scalar(select(EvidenceReviewBatchItem).where(EvidenceReviewBatchItem.batch_id==batch_id,EvidenceReviewBatchItem.passage_candidate_id==candidate.id)) if batch else None
+    if not batch or not item or batch.status!="FROZEN" or not build_batch_packet(session,batch.id)["manifest_valid"]:raise PassageAdjudicationError("a valid frozen review batch assignment is required")
+    if not secrets.compare_digest(item.passage_hash,passage.passage_hash) or not secrets.compare_digest(item.document_hash,document.content_hash):raise PassageAdjudicationError("evidence changed after batch assignment; freeze a new review batch")
+    if action!="APPROVE_SUPPORT" and item.candidate_status!=candidate.status:raise PassageAdjudicationError("candidate state changed after batch assignment; freeze a new review batch")
+    return item
+
 def evidence_controls(session,candidate,source,passage,document)->dict:
     snapshot=session.scalar(select(ResearchDocumentSnapshot).where(ResearchDocumentSnapshot.source_candidate_id==source.id,ResearchDocumentSnapshot.source_document_id==document.id,ResearchDocumentSnapshot.text_hash==document.content_hash).order_by(ResearchDocumentSnapshot.id.desc()))
     passage_hash_valid=secrets.compare_digest(hashlib.sha256(passage.passage.encode()).hexdigest(),passage.passage_hash)
@@ -55,11 +63,13 @@ def _create_claim(session,candidate,source,passage,document,value,status)->Claim
     claim=Claim(entity_id=source.entity_id,field=candidate.predicate,value=value,source_url=document.source_url,source_type=document.source_type,confidence=candidate.confidence,verification_status=status,extractor="specialist_passage_adjudication_v1",evidence_hash=document.content_hash)
     session.add(claim);session.flush();session.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=candidate.confidence,supports=True));session.flush();return claim
 
-def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rationale:str,claim_value:str|None=None,expected_status:str|None=None):
+def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rationale:str,claim_value:str|None=None,expected_status:str|None=None,review_batch_id:int|None=None):
     candidate,source,passage,document=_context(session,candidate_id)
     if not reviewer.strip() or len(rationale.strip())<10:raise PassageAdjudicationError("reviewer and substantive rationale are required")
     if expected_status is not None and candidate.status!=expected_status:raise PassageAdjudicationError("passage candidate changed; reload before deciding")
     action=action.upper();prior=candidate.status
+    if not review_batch_id:raise PassageAdjudicationError("review_batch_id is required")
+    batch_item=_batch_item(session,review_batch_id,candidate,passage,document,action)
     transitions={
         "HUMAN_REVIEW_REQUIRED":{"PROPOSE_SUPPORT":"SUPPORT_PROPOSED","REJECT":"REJECTED","DEFER":"DEFERRED","MARK_CONFLICT":"CONFLICT"},
         "DEFERRED":{"PROPOSE_SUPPORT":"SUPPORT_PROPOSED","REJECT":"REJECTED","MARK_CONFLICT":"CONFLICT"},
@@ -77,6 +87,8 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
     if action=="APPROVE_SUPPORT":
         proposal=next((x for x in reversed(events) if x.action=="PROPOSE_SUPPORT"),None)
         if not proposal or proposal.reviewer==reviewer:raise PassageAdjudicationError("independent approval is required")
+        proposal_binding=session.scalar(select(EvidenceReviewDecisionBinding).where(EvidenceReviewDecisionBinding.adjudication_event_id==proposal.id,EvidenceReviewDecisionBinding.batch_item_id==batch_item.id))
+        if not proposal_binding:raise PassageAdjudicationError("approval must use the proposal's frozen review batch")
         if not secrets.compare_digest(_normalized(proposal.claim_value or ""),_normalized(value)):raise PassageAdjudicationError("approval must use the exact proposed claim value")
         if conflicts:raise PassageAdjudicationError("material contradiction appeared after proposal; mark conflict")
         claim=_create_claim(session,candidate,source,passage,document,value,"SUPPORTED")
@@ -90,6 +102,6 @@ def adjudicate_passage(session,candidate_id:int,action:str,reviewer:str,rational
         existing=set(session.scalars(select(ConflictMember.claim_id).where(ConflictMember.conflict_id==conflict.id)).all())
         for claim_id in sorted(member_ids-existing):session.add(ConflictMember(conflict_id=conflict.id,claim_id=claim_id))
     candidate.status=result
-    event=ResearchPassageAdjudicationEvent(passage_candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale.strip(),claim_value=value,resulting_claim_id=claim.id if claim else None);session.add(event)
-    append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,"REVIEWER",action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":hashlib.sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"evidence_controls":controls,"rationale":rationale.strip()})
+    event=ResearchPassageAdjudicationEvent(passage_candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale.strip(),claim_value=value,resulting_claim_id=claim.id if claim else None);session.add(event);session.flush();session.add(EvidenceReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id))
+    append_ledger_event(session,"PASSAGE_REVIEW",candidate.id,reviewer,"REVIEWER",action,{"entity_id":source.entity_id,"predicate":candidate.predicate,"prior_state":prior,"resulting_state":result,"review_batch_id":review_batch_id,"review_batch_manifest_hash":session.get(EvidenceReviewBatch,review_batch_id).manifest_hash,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"claim_value_hash":hashlib.sha256(value.encode()).hexdigest() if value else None,"resulting_claim_id":claim.id if claim else None,"evidence_controls":controls,"rationale":rationale.strip()})
     session.flush();return {"candidate_id":candidate.id,"prior_state":prior,"resulting_state":result,"claim_id":claim.id if claim else None,"routing_candidate_ids":route_ids}

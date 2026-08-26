@@ -82,6 +82,7 @@ class PassageActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     claim_value:Optional[str]=Field(default=None,max_length=1000)
     expected_status:str=Field(min_length=5,max_length=40)
+    review_batch_id:int=Field(gt=0)
 
 class EvidenceBatchRequest(BaseModel):
     universe:str=Field(min_length=1,max_length=100)
@@ -331,9 +332,9 @@ def passage_review_action(candidate_id:int,body:PassageActionRequest,principal:P
     approval=body.action.upper()=="APPROVE_SUPPORT";permission="evidence:approve" if approval else "evidence:write";roles={"REVIEWER","COUNSEL","ADMIN"} if approval else {"RESEARCHER","REVIEWER","COUNSEL","ADMIN"}
     with SessionLocal() as s:
         packet=build_passage_packet(s,candidate_id);authorize(principal,permission,roles,packet["universe"])
-        try:result=adjudicate_passage(s,candidate_id,body.action,principal.subject,body.rationale,body.claim_value,body.expected_status)
+        try:result=adjudicate_passage(s,candidate_id,body.action,principal.subject,body.rationale,body.claim_value,body.expected_status,body.review_batch_id)
         except PassageAdjudicationError as exc:raise HTTPException(status_code=422,detail=str(exc))
-        audit_access(s,principal,"PASSAGE_REVIEW_ACTION",{"candidate_id":candidate_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"claim_created":bool(result["claim_id"])});s.commit();return result
+        audit_access(s,principal,"PASSAGE_REVIEW_ACTION",{"candidate_id":candidate_id,"review_batch_id":body.review_batch_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"claim_created":bool(result["claim_id"])});s.commit();return result
 
 @app.get("/evidence-review/routing")
 def evidence_routing_queue(status:str="PENDING_REVIEW",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
