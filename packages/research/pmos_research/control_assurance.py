@@ -11,7 +11,7 @@ from .db import (
     AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
     EvidencePassage,EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionAuthorization,EvidenceReviewDecisionBinding,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,IdentityReviewAssignment,IdentityReviewAssignmentEvent,IdentityReviewBatch,IdentityReviewBatchItem,IdentityReviewDecisionAuthorization,IdentityReviewDecisionBinding,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
-    LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
+    LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
     SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
@@ -120,6 +120,12 @@ def run_control_assurance(session)->dict:
         rel_controls=relationship_evidence_controls(session,assertion);events=session.scalars(select(RelationshipAdjudicationEvent).where(RelationshipAdjudicationEvent.relationship_assertion_id==assertion.id).order_by(RelationshipAdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
         bad+=not assertion.reviewed_by or assertion.proposed_by==assertion.reviewed_by or not rel_controls["verification_eligible"] or not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=approval.evidence_package_hash or proposal.evidence_package_hash!=rel_controls["evidence_package_hash"]
     controls.append(_control("verified_relationship_evidence_and_independence",len(relationships),bad))
+
+    promoted_candidates=session.scalars(select(RelationshipResearchCandidate).where(RelationshipResearchCandidate.status=="ASSERTION_PROPOSED")).all();bad=0
+    for candidate in promoted_candidates:
+        assertion=session.get(RelationshipAssertion,candidate.resulting_assertion_id) if candidate.resulting_assertion_id else None;link=session.scalar(select(RelationshipAssertionEvidence.id).where(RelationshipAssertionEvidence.relationship_assertion_id==candidate.resulting_assertion_id,RelationshipAssertionEvidence.evidence_passage_id==candidate.evidence_passage_id)) if assertion else None
+        bad+=not assertion or assertion.from_entity_id!=candidate.from_entity_id or assertion.to_entity_id!=candidate.to_entity_id or assertion.relation_type!=candidate.suggested_relation_type or not link
+    controls.append(_control("relationship_candidate_promotion_exact_evidence_link",len(promoted_candidates),bad))
 
     completed_gates=session.scalars(select(PrivateSaleGate).where(PrivateSaleGate.status.in_({"PASS","PASS_WITH_EXCEPTION","BLOCKED"}))).all();bad=0
     for gate in completed_gates:

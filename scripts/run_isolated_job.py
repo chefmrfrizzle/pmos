@@ -18,6 +18,7 @@ JOBS={
     "passage-reextraction":"reextract_passage_candidates.py",
     "pdf-requeue":"requeue_pdf_candidates.py",
     "source-reverification":"reverify_sources.py",
+    "relationship-discovery":"discover_relationship_candidates.py",
     "control-assurance":"assure_private_controls.py",
     "security-readiness":"assess_security_readiness.py",
     "universe-coverage":"assess_universe_coverage.py",

@@ -760,6 +760,32 @@ class RelationshipAssertion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+class RelationshipResearchCandidate(Base):
+    __tablename__ = "relationship_research_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    from_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    to_entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    suggested_relation_type: Mapped[str] = mapped_column(String(80), index=True)
+    evidence_passage_id: Mapped[int] = mapped_column(ForeignKey("evidence_passages.id"), index=True)
+    rule_version: Mapped[str] = mapped_column(String(50))
+    confidence: Mapped[float] = mapped_column(Float)
+    reasons_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    resulting_assertion_id: Mapped[Optional[int]] = mapped_column(ForeignKey("relationship_assertions.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("from_entity_id","to_entity_id","suggested_relation_type","evidence_passage_id",name="uq_relationship_research_candidate"),)
+
+class RelationshipResearchCandidateEvent(Base):
+    __tablename__ = "relationship_research_candidate_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("relationship_research_candidates.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class RelationshipAssertionEvidence(Base):
     __tablename__ = "relationship_assertion_evidence"
     id: Mapped[int] = mapped_column(primary_key=True)
