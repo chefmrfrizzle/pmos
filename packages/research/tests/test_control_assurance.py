@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from pmos_research.control_assurance import persist_assurance_run,run_control_assurance
-from pmos_research.db import Base,Claim,ClaimEvidence,ControlAssuranceRun,Entity,EvidencePassage,IdentityCluster,IdentityMembership,PrivateSaleCase,PrivateSaleGate,ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument
+from pmos_research.db import Base,Claim,ClaimEvidence,ControlAssuranceRun,Entity,EvidencePassage,IdentityCluster,IdentityMembership,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument
 
 def _clean_fixture(db):
     entity=Entity(name="Private Example Name",canonical_name="private example name",universe="test");db.add(entity);db.flush()
@@ -50,4 +50,11 @@ def test_control_assurance_rejects_private_sale_pass_without_review_history():
     with factory() as db:
         asset=Entity(name="Asset",canonical_name="asset",universe="asset");db.add(asset);db.flush();case=PrivateSaleCase(asset_entity_id=asset.id,purpose="assessment",permitted_use="diligence",owner="owner");db.add(case);db.flush();db.add(PrivateSaleGate(case_id=case.id,gate_code="provenance",fact_class="provenance",critical=True,status="PASS"));db.flush()
         result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="private_sale_gate_maker_checker_and_evidence")
+        assert result["status"]=="FAIL" and control["exceptions"]==1
+
+def test_control_assurance_rejects_approved_jurisdiction_without_review_history():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Institution",canonical_name="institution",universe="test",country="CA");db.add(entity);db.flush();claim=Claim(entity_id=entity.id,field="country",value="CA",source_url="https://official.example",verification_status="SUPPORTED",evidence_hash="a"*64);db.add(claim);db.flush();db.add(JurisdictionReviewCase(entity_id=entity.id,original_country="0",proposed_country="CA",source_claim_id=claim.id,status="APPROVED",proposed_by="maker",reviewed_by="checker"));db.flush()
+        result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="approved_jurisdiction_correction_evidence_and_maker_checker")
         assert result["status"]=="FAIL" and control["exceptions"]==1

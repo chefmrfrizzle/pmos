@@ -514,6 +514,32 @@ class JurisdictionProfile(Base):
     as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("entity_id", "jurisdiction", name="uq_entity_jurisdiction"),)
 
+class JurisdictionReviewCase(Base):
+    __tablename__ = "jurisdiction_review_cases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), unique=True, index=True)
+    original_country: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    proposed_country: Mapped[Optional[str]] = mapped_column(String(2), nullable=True)
+    source_claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    proposed_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class JurisdictionReviewEvent(Base):
+    __tablename__ = "jurisdiction_review_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("jurisdiction_review_cases.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    actor: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    source_claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class InstitutionalStructure(Base):
     __tablename__ = "institutional_structures"
     id: Mapped[int] = mapped_column(primary_key=True)

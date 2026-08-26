@@ -8,9 +8,9 @@ from sqlalchemy import select
 from .audit_ledger import verify_ledger
 from .case_checks import evidence_sufficiency
 from .db import (
-    AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,
+    AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
-    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
+    EvidencePassage,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
@@ -83,10 +83,16 @@ def run_control_assurance(session)->dict:
         bad+=not claim or claim.entity_id!=identifier.entity_id or claim.value!=identifier.identifier_value or claim.verification_status!="SPECIALIST_VERIFIED" or not proposer or not approver or proposer==approver
     controls.append(_control("accepted_legal_identifier_maker_checker",len(identifiers),bad))
 
+    jurisdiction_cases=session.scalars(select(JurisdictionReviewCase).where(JurisdictionReviewCase.status=="APPROVED")).all();bad=0
+    for case in jurisdiction_cases:
+        entity=session.get(Entity,case.entity_id);claim=session.get(Claim,case.source_claim_id) if case.source_claim_id else None;events=session.scalars(select(JurisdictionReviewEvent).where(JurisdictionReviewEvent.case_id==case.id).order_by(JurisdictionReviewEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE_CORRECTION"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE_CORRECTION"),None)
+        bad+=not entity or entity.country!=case.proposed_country or not claim or claim.entity_id!=case.entity_id or claim.value.strip().upper()!=case.proposed_country or claim.verification_status not in QUALIFYING_CLAIMS or not claim.evidence_hash or not proposal or not approval or proposal.actor==approval.actor or case.proposed_by!=proposal.actor or case.reviewed_by!=approval.actor
+    controls.append(_control("approved_jurisdiction_correction_evidence_and_maker_checker",len(jurisdiction_cases),bad))
+
     relationships=session.scalars(select(RelationshipAssertion).where(RelationshipAssertion.status=="SPECIALIST_VERIFIED")).all();bad=0
     for assertion in relationships:
-        controls=relationship_evidence_controls(session,assertion);events=session.scalars(select(RelationshipAdjudicationEvent).where(RelationshipAdjudicationEvent.relationship_assertion_id==assertion.id).order_by(RelationshipAdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
-        bad+=not assertion.reviewed_by or assertion.proposed_by==assertion.reviewed_by or not controls["verification_eligible"] or not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=approval.evidence_package_hash or proposal.evidence_package_hash!=controls["evidence_package_hash"]
+        rel_controls=relationship_evidence_controls(session,assertion);events=session.scalars(select(RelationshipAdjudicationEvent).where(RelationshipAdjudicationEvent.relationship_assertion_id==assertion.id).order_by(RelationshipAdjudicationEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in reversed(events) if x.action=="APPROVE"),None)
+        bad+=not assertion.reviewed_by or assertion.proposed_by==assertion.reviewed_by or not rel_controls["verification_eligible"] or not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=approval.evidence_package_hash or proposal.evidence_package_hash!=rel_controls["evidence_package_hash"]
     controls.append(_control("verified_relationship_evidence_and_independence",len(relationships),bad))
 
     completed_gates=session.scalars(select(PrivateSaleGate).where(PrivateSaleGate.status.in_({"PASS","PASS_WITH_EXCEPTION","BLOCKED"}))).all();bad=0

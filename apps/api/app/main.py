@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,JurisdictionReviewCase,PrivateSaleCase,PrivateSaleGate,RelationshipAssertion,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -26,6 +26,7 @@ from pmos_research.relationship_controls import adjudicate_relationship,propose_
 from pmos_research.relationship_review import build_relationship_packet
 from pmos_research.private_sale import PrivateSaleError,adjudicate_gate,open_private_sale,submit_gate_evidence
 from pmos_research.private_sale_review import build_private_sale_packet
+from pmos_research.jurisdiction_review import JurisdictionReviewError,adjudicate_jurisdiction,build_jurisdiction_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -41,6 +42,12 @@ class IdentityActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     evidence_ids:list[int]=Field(default_factory=list,max_length=25)
     expected_version:str=Field(min_length=10,max_length=80)
+
+class JurisdictionActionRequest(BaseModel):
+    action:str=Field(min_length=6,max_length=30)
+    rationale:str=Field(min_length=10,max_length=2000)
+    source_claim_id:Optional[int]=Field(default=None,gt=0)
+    expected_status:str=Field(min_length=5,max_length=40)
 
 class RelationshipProposalRequest(BaseModel):
     from_entity_id:int=Field(gt=0)
@@ -180,6 +187,26 @@ def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Prin
         except StaleReviewError as exc:raise HTTPException(status_code=409,detail=str(exc))
         except AdjudicationInputError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
+
+@app.get("/jurisdiction-review")
+def jurisdiction_review_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"})
+    with SessionLocal() as s:
+        cases=s.scalars(select(JurisdictionReviewCase).where(JurisdictionReviewCase.status==status.upper()).order_by(JurisdictionReviewCase.id).limit(limit*5)).all();rows=[]
+        for case in cases:
+            packet=build_jurisdiction_packet(s,case.id)
+            if "*" in principal.universes or packet["entity"]["universe"] in principal.universes:rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"JURISDICTION_REVIEW_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/jurisdiction-review/{case_id}/actions")
+def jurisdiction_review_action(case_id:int,body:JurisdictionActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper()=="APPROVE_CORRECTION";permission="identity:approve" if approval else "identity:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
+    with SessionLocal() as s:
+        packet=build_jurisdiction_packet(s,case_id);authorize(principal,permission,roles,packet["entity"]["universe"])
+        try:case=adjudicate_jurisdiction(s,case_id,body.action,principal.subject,body.rationale,body.source_claim_id,body.expected_status)
+        except JurisdictionReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        result=build_jurisdiction_packet(s,case.id);audit_access(s,principal,"JURISDICTION_REVIEW_ACTION",{"case_id":case.id,"action":body.action.upper(),"resulting_state":case.status,"source_claim_id":case.source_claim_id});s.commit();return result
 
 @app.post("/relationship-review")
 def relationship_proposal(body:RelationshipProposalRequest,principal:Principal=Depends(authenticate_private_request)):
