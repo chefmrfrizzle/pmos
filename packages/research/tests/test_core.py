@@ -6,7 +6,7 @@ from pmos_research.adjudication import AdjudicationInputError, StaleReviewError,
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
 from pmos_research.audit_ledger import append_ledger_event,verify_ledger
-from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship,verify_relationship
+from pmos_research.relationship_controls import adjudicate_relationship,propose_relationship,relationship_evidence_controls,verify_relationship
 from pmos_research.registry_research import assess_lei_candidate,persist_lei_candidate
 from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
@@ -338,19 +338,19 @@ def test_sqlite_ledger_guards_reject_update_and_delete():
         db.rollback()
         with pytest.raises(DatabaseError):db.delete(entry);db.commit()
 
-def _relationship_fixture(db,ranks):
+def _relationship_fixture(db,ranks,text_template="{source} advises {target}.",content_hashes=None):
     source=Entity(name="Source",canonical_name="source",universe="test");target=Entity(name="Target",canonical_name="target",universe="test")
     db.add_all([source,target]);db.flush();passages=[]
     offset=db.scalar(select(func.count()).select_from(SourceDocument)) or 0
     for index,(rank,group) in enumerate(ranks,offset+1):
-        document=SourceDocument(entity_id=source.id,publisher=group,publisher_independence_group=group,source_rank=rank,source_type="registry",source_url=f"https://source{index}.example",content_hash=f"{index:064x}"[-64:])
-        db.add(document);db.flush();text=f"Source {index} states the relationship between Source and Target.";digest=hashlib.sha256(text.encode()).hexdigest();passage=EvidencePassage(document_id=document.id,section="relationship",passage=text,passage_hash=digest);db.add(passage);passages.append(passage)
+        text=text_template.format(source=source.name,target=target.name,index=index);content_hash=(content_hashes or {}).get(index,hashlib.sha256((group+text).encode()).hexdigest());document=SourceDocument(entity_id=source.id,publisher=group,publisher_independence_group=group,source_rank=rank,source_type="registry",source_url=f"https://source{index}.example",content_hash=content_hash)
+        db.add(document);db.flush();digest=hashlib.sha256(text.encode()).hexdigest();passage=EvidencePassage(document_id=document.id,section="relationship",passage=text,passage_hash=digest);db.add(passage);passages.append(passage)
     db.flush();return source,target,passages
 
 def test_sensitive_relationship_requires_dispositive_primary_source_and_independent_review():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        source,target,passages=_relationship_fixture(db,[("S1","official-site")])
+        source,target,passages=_relationship_fixture(db,[("S1","official-site")],"{source} controls {target}.")
         assertion=propose_relationship(db,source.id,target.id,"CONTROLS","maker",[passages[0].id],"GB")
         assert assertion.status=="HUMAN_REVIEW_REQUIRED" and assertion.sensitive
         with pytest.raises(ValueError):verify_relationship(db,assertion.id,"maker","self approval")
@@ -360,7 +360,7 @@ def test_sensitive_relationship_requires_dispositive_primary_source_and_independ
 def test_relationship_verification_accepts_s0_or_independent_corroboration():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
-        source,target,passages=_relationship_fixture(db,[("S0","companies-house")])
+        source,target,passages=_relationship_fixture(db,[("S0","companies-house")],"{source} owns {target}.")
         sensitive=propose_relationship(db,source.id,target.id,"OWNS","maker",[passages[0].id],"GB")
         verify_relationship(db,sensitive.id,"checker","registry instrument directly records ownership")
         assert sensitive.status=="SPECIALIST_VERIFIED"
@@ -370,6 +370,18 @@ def test_relationship_verification_accepts_s0_or_independent_corroboration():
         ordinary=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in passages])
         verify_relationship(db,ordinary.id,"checker","independent sources corroborate the advisory relationship")
         assert ordinary.status=="SPECIALIST_VERIFIED"
+
+def test_relationship_corroboration_rejects_syndicated_duplicates_and_irrelevant_passages():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        duplicate_hash="d"*64;source,target,passages=_relationship_fixture(db,[("S1","publisher-a"),("S2","publisher-b")],content_hashes={1:duplicate_hash,2:duplicate_hash})
+        assertion=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in passages]);controls=relationship_evidence_controls(db,assertion)
+        assert controls["duplicate_content_count"]==1 and controls["independence_group_count"]==1 and not controls["verification_eligible"]
+        with pytest.raises(ValueError,match="verification policy"):verify_relationship(db,assertion.id,"checker","Syndicated content is not independent corroboration")
+    with factory() as db:
+        source,target,passages=_relationship_fixture(db,[("S0","registry")],"{source} and {target} filed annual returns.")
+        assertion=propose_relationship(db,source.id,target.id,"OWNS","maker",[passages[0].id]);controls=relationship_evidence_controls(db,assertion)
+        assert controls["semantic_scope_exceptions"]==1 and not controls["verification_eligible"]
 
 def test_relationship_rejects_unknown_predicates_and_changed_evidence_package():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)

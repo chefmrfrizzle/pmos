@@ -20,6 +20,8 @@ The local ledger is SHA-256 hash-chained per decision stream and SQLite installs
 
 Sensitive relationship assertions (`OWNS`, `CONTROLS`, beneficial ownership, and trustee roles) require a dispositive S0 source and independent reviewer. Other relationship verification requires S0 or two independent S1–S3 sources including S1/S2. Names, domains, and private source rows never prove ownership.
 
+Publisher labels alone do not prove corroboration. Relationship evidence must name both scoped entities and contain predicate-specific language; identical document hashes syndicated across publisher groups are deduplicated before independence is calculated. Every excluded passage and reason remains visible in the review packet.
+
 The legacy broad CSV export is disabled. Private exports are limited to one diligence dossier in JSON, require exact permitted-purpose matching, a recent passing assurance run, independent approval, a different executor, and an unexpired single-use request. Execution resolves beneath `PMOS_PRIVATE_ROOT`, rejects repository and symlink escape, verifies encrypted storage, uses owner-only permissions, rehashes the artifact, emits a classified manifest, and records request/approval/execution events plus ledger anchors. No browser download route exists. Encrypted delivery and recipient verification remain separate operational requirements before distribution.
 
 ## Remaining assurance gates

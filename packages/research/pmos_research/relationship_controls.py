@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import hashlib,secrets
+import hashlib,re,secrets
 from datetime import datetime,timezone
 from sqlalchemy import select
 
@@ -10,8 +10,18 @@ from .db import Entity,EvidencePassage,RelationshipAdjudicationEvent,Relationshi
 ALLOWED_RELATIONSHIPS={"OWNS","MANAGES","ADVISES","ALLOCATES_TO","INVESTED_IN","CO_INVESTED_WITH","TRUSTEE_OF","BOARD_MEMBER_OF","REPRESENTS","FINANCES","INSURES","REINSURES","BROKERS_FOR","CUSTODIES","ADMINISTERS","INTRODUCED_BY","WORKS_FOR","FOUNDED","CONTROLS","BOUGHT_FROM","SOLD_TO","ADVISED_BY","RELATED_TO","PARTNERED_WITH","BENEFICIAL_OWNER_OF"}
 SENSITIVE_RELATIONSHIPS={"OWNS","CONTROLS","BENEFICIAL_OWNER_OF","TRUSTEE_OF"}
 QUALIFYING_CORROBORATION={"S0","S1","S2","S3"}
+RELATIONSHIP_TERMS={
+    "OWNS":("owns","owned by","ownership"),"CONTROLS":("controls","controlled by","control of"),"BENEFICIAL_OWNER_OF":("beneficial owner","beneficially owns"),"TRUSTEE_OF":("trustee of","serves as trustee"),
+    "MANAGES":("manages","managed by","investment manager"),"ADVISES":("advises","advisor to","adviser to","advisory relationship"),"ADVISED_BY":("advised by","advisor is","adviser is"),
+    "ALLOCATES_TO":("allocates to","allocation to","committed to"),"INVESTED_IN":("invested in","investment in"),"CO_INVESTED_WITH":("co-invested with","co-investment with"),
+    "PARTNERED_WITH":("partnered with","partnership with"),"BOARD_MEMBER_OF":("board member of","director of"),"REPRESENTS":("represents","represented by"),
+    "FINANCES":("finances","financed by","financing for"),"INSURES":("insures","insured by"),"REINSURES":("reinsures","reinsured by"),"BROKERS_FOR":("brokers for","broker for"),
+    "CUSTODIES":("custodies","custodian for"),"ADMINISTERS":("administers","administrator for"),"INTRODUCED_BY":("introduced by","introduction by"),"WORKS_FOR":("works for","employed by"),
+    "FOUNDED":("founded","founder of"),"BOUGHT_FROM":("bought from","purchased from"),"SOLD_TO":("sold to","sale to"),"RELATED_TO":("related to","affiliated with"),
+}
 
 def _utc(value):return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+def _norm(value):return " ".join(re.sub(r"[^a-z0-9]+"," ",value.casefold()).split())
 
 def _evidence_rows(session,assertion_id:int):
     return session.execute(select(RelationshipAssertionEvidence,EvidencePassage,SourceDocument).join(EvidencePassage,RelationshipAssertionEvidence.evidence_passage_id==EvidencePassage.id).join(SourceDocument,RelationshipAssertionEvidence.source_document_id==SourceDocument.id).where(RelationshipAssertionEvidence.relationship_assertion_id==assertion_id).order_by(SourceDocument.id,EvidencePassage.id)).all()
@@ -21,15 +31,19 @@ def _package_hash(rows)->str:
     return hashlib.sha256(material.encode()).hexdigest()
 
 def relationship_evidence_controls(session,assertion:RelationshipAssertion)->dict:
-    rows=_evidence_rows(session,assertion.id);now=datetime.now(timezone.utc);threshold=90 if assertion.sensitive else 365;bad_hash=0;out_of_scope=0;stale=0;groups=set();ranks=set();factors=[]
+    rows=_evidence_rows(session,assertion.id);now=datetime.now(timezone.utc);threshold=90 if assertion.sensitive else 365;bad_hash=0;out_of_scope=0;stale=0;semantic=0;duplicate=0;groups=set();ranks=set();factors=[];seen_content=set();source=session.get(Entity,assertion.from_entity_id);target=session.get(Entity,assertion.to_entity_id)
     for _,passage,document in rows:
-        bad_hash+=hashlib.sha256(passage.passage.encode()).hexdigest()!=passage.passage_hash;out_of_scope+=document.entity_id not in {assertion.from_entity_id,assertion.to_entity_id}
-        age=max(0,(now-_utc(document.retrieved_at)).days);stale+=age>threshold;ranks.add(document.source_rank)
-        if document.source_rank in QUALIFYING_CORROBORATION:groups.add(document.publisher_independence_group)
-        factors.append({"source_document_id":document.id,"passage_id":passage.id,"source_rank":document.source_rank,"independence_group":document.publisher_independence_group,"age_days":age,"freshness_threshold_days":threshold})
-    sufficient="S0" in ranks if assertion.sensitive else "S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}));integrity=bool(rows) and bad_hash==0 and out_of_scope==0 and stale==0
+        hash_valid=hashlib.sha256(passage.passage.encode()).hexdigest()==passage.passage_hash;scope_valid=document.entity_id in {assertion.from_entity_id,assertion.to_entity_id};text=_norm(passage.passage);names_valid=bool(source and target and _norm(source.name) in text and _norm(target.name) in text);terms=RELATIONSHIP_TERMS.get(assertion.relation_type,());relation_language=any(_norm(term) in text for term in terms);semantic_valid=names_valid and relation_language
+        bad_hash+=not hash_valid;out_of_scope+=not scope_valid;semantic+=not semantic_valid
+        age=max(0,(now-_utc(document.retrieved_at)).days);fresh=age<=threshold;stale+=not fresh;duplicate_content=document.content_hash in seen_content;duplicate+=duplicate_content
+        eligible=hash_valid and scope_valid and fresh and semantic_valid and not duplicate_content
+        if eligible:
+            seen_content.add(document.content_hash);ranks.add(document.source_rank)
+            if document.source_rank in QUALIFYING_CORROBORATION:groups.add(document.publisher_independence_group)
+        factors.append({"source_document_id":document.id,"passage_id":passage.id,"source_rank":document.source_rank,"independence_group":document.publisher_independence_group,"age_days":age,"freshness_threshold_days":threshold,"passage_hash_valid":hash_valid,"entity_pair_named":names_valid,"relationship_language_present":relation_language,"duplicate_content":duplicate_content,"eligible":eligible})
+    sufficient="S0" in ranks if assertion.sensitive else "S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}));integrity=bool(rows) and bad_hash==0 and out_of_scope==0 and stale==0 and semantic==0
     rank_score=max(({"S0":1.0,"S1":.9,"S2":.8,"S3":.65}.get(x,.3) for x in ranks),default=0);independence_bonus=min(.1,max(0,len(groups)-1)*.05);confidence=round(min(1,rank_score+independence_bonus) if integrity and sufficient else min(.49,rank_score*.5),2)
-    return {"evidence_count":len(rows),"passage_hash_exceptions":bad_hash,"entity_scope_exceptions":out_of_scope,"stale_source_count":stale,"source_ranks":sorted(ranks),"independence_group_count":len(groups),"policy_sufficient":sufficient,"integrity_valid":integrity,"verification_eligible":integrity and sufficient,"evidence_confidence":confidence,"confidence_factors":factors,"evidence_package_hash":_package_hash(rows)}
+    return {"evidence_count":len(rows),"eligible_evidence_count":sum(x["eligible"] for x in factors),"passage_hash_exceptions":bad_hash,"entity_scope_exceptions":out_of_scope,"semantic_scope_exceptions":semantic,"stale_source_count":stale,"duplicate_content_count":duplicate,"source_ranks":sorted(ranks),"independence_groups":sorted(groups),"independence_group_count":len(groups),"policy_sufficient":sufficient,"integrity_valid":integrity,"verification_eligible":integrity and sufficient,"evidence_confidence":confidence,"confidence_factors":factors,"evidence_package_hash":_package_hash(rows)}
 
 def propose_relationship(session,from_entity_id:int,to_entity_id:int,relation_type:str,proposer:str,evidence_passage_ids,jurisdiction:str|None=None):
     relation_type=relation_type.upper().strip()
