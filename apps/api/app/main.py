@@ -10,12 +10,14 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import CheckResult,DiligenceCase,DiligenceCheckEvidence,ReviewQueueItem,init_db, SessionLocal, Entity
+from pmos_research.db import CheckResult,DiligenceCase,DiligenceCheckEvidence,ResearchPassageCandidate,ReviewQueueItem,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
 from pmos_research.adjudication import AdjudicationInputError,StaleReviewError,adjudicate
 from pmos_research.identity_review import build_review_packet
+from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
+from pmos_research.passage_review import build_passage_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -31,6 +33,12 @@ class IdentityActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     evidence_ids:list[int]=Field(default_factory=list,max_length=25)
     expected_version:str=Field(min_length=10,max_length=80)
+
+class PassageActionRequest(BaseModel):
+    action:str=Field(min_length=5,max_length=40)
+    rationale:str=Field(min_length=10,max_length=2000)
+    claim_value:Optional[str]=Field(default=None,max_length=1000)
+    expected_status:str=Field(min_length=5,max_length=40)
 
 @asynccontextmanager
 async def lifespan(app):
@@ -105,6 +113,26 @@ def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Prin
         except StaleReviewError as exc:raise HTTPException(status_code=409,detail=str(exc))
         except AdjudicationInputError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result
+
+@app.get("/evidence-review/passages")
+def passage_review_queue(status:str="HUMAN_REVIEW_REQUIRED",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"evidence:review",{"RESEARCHER","REVIEWER","COUNSEL","ADMIN"})
+    with SessionLocal() as s:
+        candidates=s.query(ResearchPassageCandidate).filter(ResearchPassageCandidate.status==status.upper()).order_by(ResearchPassageCandidate.confidence.desc(),ResearchPassageCandidate.id).limit(limit*5).all();rows=[]
+        for candidate in candidates:
+            packet=build_passage_packet(s,candidate.id)
+            if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
+            if len(rows)>=limit:break
+        audit_access(s,principal,"PASSAGE_REVIEW_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/evidence-review/passages/{candidate_id}/actions")
+def passage_review_action(candidate_id:int,body:PassageActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper()=="APPROVE_SUPPORT";permission="evidence:approve" if approval else "evidence:write";roles={"REVIEWER","COUNSEL","ADMIN"} if approval else {"RESEARCHER","REVIEWER","COUNSEL","ADMIN"}
+    with SessionLocal() as s:
+        packet=build_passage_packet(s,candidate_id);authorize(principal,permission,roles,packet["universe"])
+        try:result=adjudicate_passage(s,candidate_id,body.action,principal.subject,body.rationale,body.claim_value,body.expected_status)
+        except PassageAdjudicationError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"PASSAGE_REVIEW_ACTION",{"candidate_id":candidate_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"claim_created":bool(result["claim_id"])});s.commit();return result
 
 @app.get("/health")
 def health(): return {"ok":True,"service":"pmos-api"}

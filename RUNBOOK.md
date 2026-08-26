@@ -12,6 +12,8 @@ Prepare persistent review and corroboration queues with `python scripts/prepare_
 
 After official identity corroboration, discover review-only diligence documents with `python scripts/discover_case_sources.py --limit 10 --per-entity 20`. Retrieve a bounded cohort with `python scripts/retrieve_source_candidates.py --limit 5`. Both commands emit aggregate outcomes only. Retrieval can create sanitized document snapshots and exact candidate passages; it cannot create or complete claims/checks. Review `RETRIEVED_REVIEW_REQUIRED`, `UNSUPPORTED_CONTENT_TYPE`, `BLOCKED_ROBOTS`, `BLOCKED_SIZE`, and `RETRY_REQUIRED` separately. Never reset a terminal outcome merely to increase coverage.
 
+Use authenticated `GET /evidence-review/passages` to inspect exact passage packets. `PROPOSE_SUPPORT` requires `evidence:write`, an exact passage substring, substantive rationale, and the current status. `APPROVE_SUPPORT` requires `evidence:approve`, a different reviewer, the identical value, and `SUPPORT_PROPOSED`. Use `MARK_CONFLICT` when material claims disagree; do not force a support transition. The resulting supported claim still needs check-level evidence attachment and independent check approval.
+
 ## Public release
 
 Build before the final check so compiled browser bundles and source maps are inspected:
