@@ -24,6 +24,9 @@ OUTCOME_STATES={
     "robots_blocked_or_unavailable":"BLOCKED_ROBOTS",
     "unsupported_content_type":"UNSUPPORTED_CONTENT_TYPE",
     "response_too_large":"BLOCKED_SIZE",
+    "invalid_pdf_signature":"INVALID_PDF",
+    "pdf_extraction_failed":"PDF_EXTRACTION_FAILED",
+    "pdf_no_extractable_text":"PDF_NO_EXTRACTABLE_TEXT",
 }
 
 def extract_predicate_passages(text:str,predicates:list[str],max_chars:int=700)->list[dict]:
@@ -54,11 +57,15 @@ def persist_retrieved_candidate(session,candidate:ResearchSourceCandidate,snapsh
         document=SourceDocument(entity_id=candidate.entity_id,publisher=candidate.source_domain,publisher_independence_group=candidate.source_domain,source_rank="S1",source_type="official_website",source_url=snapshot["url"],title=snapshot.get("title") or None,content_hash=digest);session.add(document);session.flush()
     stored=session.scalar(select(ResearchDocumentSnapshot).where(ResearchDocumentSnapshot.source_candidate_id==candidate.id,ResearchDocumentSnapshot.text_hash==digest))
     if not stored:session.add(ResearchDocumentSnapshot(source_candidate_id=candidate.id,source_document_id=document.id,normalized_text=text,text_hash=digest));session.flush()
-    predicates=json.loads(candidate.target_predicates_json);passages=extract_predicate_passages(text,predicates);counts=Counter()
-    for item in passages:
+    predicates=json.loads(candidate.target_predicates_json);counts=Counter();passages=[]
+    if snapshot.get("pages"):
+        for page in snapshot["pages"]:
+            for item in extract_predicate_passages(page.get("text",""),predicates):passages.append({**item,"page":str(page["page"])})
+    else:passages=[{**item,"page":None} for item in extract_predicate_passages(text,predicates)]
+    for item in passages[:25]:
         passage_hash=hashlib.sha256(item["passage"].encode()).hexdigest();passage=session.scalar(select(EvidencePassage).where(EvidencePassage.document_id==document.id,EvidencePassage.passage_hash==passage_hash))
         if not passage:
-            passage=EvidencePassage(document_id=document.id,section=f"candidate:{item['predicate']}:{item['matched_term']}",start_offset=item["start_offset"],end_offset=item["end_offset"],passage=item["passage"],passage_hash=passage_hash);session.add(passage);session.flush()
+            passage=EvidencePassage(document_id=document.id,page=item["page"],section=f"candidate:{item['predicate']}:{item['matched_term']}",start_offset=item["start_offset"],end_offset=item["end_offset"],passage=item["passage"],passage_hash=passage_hash);session.add(passage);session.flush()
         existing=session.scalar(select(ResearchPassageCandidate).where(ResearchPassageCandidate.source_candidate_id==candidate.id,ResearchPassageCandidate.evidence_passage_id==passage.id,ResearchPassageCandidate.predicate==item["predicate"]))
         if not existing:session.add(ResearchPassageCandidate(source_candidate_id=candidate.id,evidence_passage_id=passage.id,predicate=item["predicate"],confidence=item["confidence"]));counts["passages_queued"]+=1
     prior=candidate.status;candidate.status="RETRIEVED_REVIEW_REQUIRED";candidate.updated_at=datetime.now(timezone.utc)

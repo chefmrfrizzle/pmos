@@ -1,9 +1,10 @@
 from __future__ import annotations
-import hashlib, ipaddress, os, socket, time
+import hashlib, ipaddress, json, os, socket, subprocess, sys, time
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 import httpx
 from bs4 import BeautifulSoup
+from pmos_research.runtime_isolation import ResourceLimits,apply_resource_limits,sanitized_environment
 
 class UnsafeResearchTarget(ValueError):pass
 class ResponseTooLarge(ValueError):pass
@@ -13,8 +14,9 @@ class OfficialWebAdapter:
         self.user_agent=os.getenv("PMOS_USER_AGENT","PMOSResearch/0.2 (+public-evidence; respectful crawler)")
         self.delay=max(.5,min(float(os.getenv("PMOS_REQUEST_DELAY_SECONDS","1.5")),30))
         self.max_bytes=max(65536,min(int(os.getenv("PMOS_MAX_RESPONSE_BYTES","2000000")),10000000))
+        self.max_pdf_bytes=max(65536,min(int(os.getenv("PMOS_MAX_PDF_BYTES","10000000")),20000000))
         timeout=httpx.Timeout(20,connect=10,read=20,write=10,pool=5)
-        self.client=httpx.Client(headers={"User-Agent":self.user_agent,"Accept":"text/html,application/xhtml+xml"},follow_redirects=False,timeout=timeout,trust_env=False)
+        self.client=httpx.Client(headers={"User-Agent":self.user_agent,"Accept":"text/html,application/xhtml+xml,application/pdf"},follow_redirects=False,timeout=timeout,trust_env=False)
         self.resolver=resolver or socket.getaddrinfo
         self._robots={};self._last_request={}
 
@@ -50,12 +52,13 @@ class OfficialWebAdapter:
                     if not location:raise httpx.HTTPStatusError("redirect missing location",request=response.request,response=response)
                     current=self._validate_url(urljoin(current,location));continue
                 response.raise_for_status()
+                content_type=response.headers.get("content-type","").casefold();limit=self.max_pdf_bytes if "application/pdf" in content_type else self.max_bytes
                 length=response.headers.get("content-length")
-                if length and length.isdigit() and int(length)>self.max_bytes:raise ResponseTooLarge("declared response is too large")
+                if length and length.isdigit() and int(length)>limit:raise ResponseTooLarge("declared response is too large")
                 body=bytearray()
                 for chunk in response.iter_bytes():
                     body.extend(chunk)
-                    if len(body)>self.max_bytes or response.num_bytes_downloaded>self.max_bytes:raise ResponseTooLarge("streamed response is too large")
+                    if len(body)>limit or response.num_bytes_downloaded>limit:raise ResponseTooLarge("streamed response is too large")
                 # iter_bytes() returns decoded bytes. Do not carry wire-encoding or
                 # length headers into the reconstructed in-memory response.
                 headers={k:v for k,v in response.headers.items() if k.casefold() not in {"content-encoding","content-length","transfer-encoding"}}
@@ -78,6 +81,13 @@ class OfficialWebAdapter:
         if not self.allowed(url):return {"url":url,"status":"robots_blocked_or_unavailable"}
         response=self._get(url)
         content_type=response.headers.get("content-type","").lower()
+        if "application/pdf" in content_type:
+            if not response.content.startswith(b"%PDF-"):return {"url":str(response.url),"status":"invalid_pdf_signature"}
+            try:pdf=self._extract_pdf(response.content)
+            except (subprocess.SubprocessError,ValueError,json.JSONDecodeError):return {"url":str(response.url),"status":"pdf_extraction_failed"}
+            if not pdf.get("pages") or not any(x.get("text","").strip() for x in pdf["pages"]):return {"url":str(response.url),"status":"pdf_no_extractable_text"}
+            text=" ".join(x["text"] for x in pdf["pages"] if x.get("text"))[:50000]
+            return {"url":str(response.url),"status":"ok","title":pdf.get("title","")[:500],"text":text,"pages":pdf["pages"],"hash":hashlib.sha256(response.content).hexdigest(),"media_type":"application/pdf"}
         if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
             return {"url":str(response.url),"status":"unsupported_content_type"}
         if len(response.content)>self.max_bytes:return {"url":str(response.url),"status":"response_too_large"}
@@ -86,3 +96,10 @@ class OfficialWebAdapter:
         title=soup.title.get_text(" ",strip=True) if soup.title else ""
         normalized=" ".join(" ".join(soup.stripped_strings).split())
         return {"url":str(response.url),"status":"ok","title":title[:500],"text":normalized[:50000],"hash":hashlib.sha256(normalized.encode()).hexdigest(),"html":response.text[:1000000]}
+
+    def _extract_pdf(self,content:bytes)->dict:
+        command=[sys.executable,"-m","pmos_research.pdf_worker"]
+        preexec=lambda:apply_resource_limits(ResourceLimits(cpu_seconds=20,file_bytes=10_000_000,open_files=64,processes=512))
+        result=subprocess.run(command,input=content,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,env=sanitized_environment(),timeout=25,check=False,preexec_fn=preexec)
+        if result.returncode or len(result.stdout)>1_000_000:raise ValueError("PDF extractor failed or exceeded output limit")
+        return json.loads(result.stdout)

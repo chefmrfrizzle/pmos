@@ -140,6 +140,21 @@ def test_official_adapter_does_not_double_decode_reconstructed_response():
     response=adapter._get("https://example.test/")
     assert response.text=="<html><title>Compressed</title></html>" and "content-encoding" not in response.headers
 
+def test_official_adapter_extracts_pdf_in_isolated_bounded_path(monkeypatch):
+    adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))]);monkeypatch.setattr(adapter,"allowed",lambda url:True)
+    adapter.client=httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(200,content=b"%PDF-test",headers={"content-type":"application/pdf"})),trust_env=False)
+    monkeypatch.setattr(adapter,"_extract_pdf",lambda content:{"title":"Annual Report","pages":[{"page":1,"text":"Investment mandate and governance","text_hash":"a"*64}]})
+    result=adapter.fetch("https://example.test/report.pdf")
+    assert result["status"]=="ok" and result["media_type"]=="application/pdf" and result["pages"][0]["page"]==1
+
+def test_pdf_worker_rejects_page_count_over_limit(monkeypatch):
+    from pypdf import PdfWriter
+    from pmos_research.pdf_worker import extract
+    import io
+    writer=PdfWriter();writer.add_blank_page(width=72,height=72);writer.add_blank_page(width=72,height=72);payload=io.BytesIO();writer.write(payload)
+    monkeypatch.setenv("PMOS_PDF_MAX_PAGES","1")
+    with pytest.raises(ValueError):extract(payload.getvalue())
+
 def test_robots_failure_is_fail_closed():
     adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))])
     class Broken:
