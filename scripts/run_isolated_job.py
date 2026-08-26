@@ -26,6 +26,7 @@ JOBS={
     "approved-export":"execute_approved_export.py",
     "identity-audit":"audit_identity_matches.py",
     "identity-review-freeze":"freeze_identity_review_batch.py",
+    "identity-review-expire":"expire_identity_review_assignments.py",
     "lei-research":"research_lei_candidates.py",
     "ledger-verify":"verify_audit_ledger.py",
     "public-check":"public_release_check.py",

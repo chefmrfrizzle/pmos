@@ -6,6 +6,7 @@ from sqlalchemy.pool import StaticPool
 from apps.api.app.security import Principal,authenticate_private_request
 from pmos_research.db import Base,Entity,Evidence,ImportBatch,RawImportRow,ResolutionDecision,ReviewQueueItem
 from pmos_research.identity_review_batch import freeze_identity_batch
+from pmos_research.identity_review_assignment import assign_identity_reviewer
 
 def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monkeypatch):
     import apps.api.app.main as main
@@ -19,7 +20,7 @@ def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monk
         decision=ResolutionDecision(raw_row_id=raw.id,candidate_entity_id=candidate.id,state="PROBABLE_MATCH",confidence=.9,reasons_json='["name and domain"]');db.add(decision);db.flush()
         item=ReviewQueueItem(resolution_decision_id=decision.id,queue_type="ENTITY",priority=90,reasons_json='["review"]');db.add(item);db.flush()
         evidence=Evidence(entity_id=candidate.id,source_url="https://source.example/about",source_type="official",content_hash="c"*64,text_excerpt="Source Capital LP official site");wrong=Evidence(entity_id=unrelated.id,source_url="https://unrelated.example",source_type="official",content_hash="d"*64)
-        db.add_all([evidence,wrong]);db.flush();batch=freeze_identity_batch(db,"assigner","venture_capital");db.commit();item_id=item.id;evidence_id=evidence.id;wrong_id=wrong.id;batch_id=batch.id
+        db.add_all([evidence,wrong]);db.flush();batch=freeze_identity_batch(db,"assigner","venture_capital");maker_assignment=assign_identity_reviewer(db,batch.id,"maker","RESEARCHER","assigner","Maker assigned for identity proposal");assign_identity_reviewer(db,batch.id,"checker","REVIEWER","assigner","Checker assigned for independent approval");db.commit();item_id=item.id;evidence_id=evidence.id;wrong_id=wrong.id;batch_id=batch.id;maker_assignment_id=maker_assignment.id
     monkeypatch.setattr(main,"SessionLocal",factory);monkeypatch.setattr(main,"init_db",lambda:None)
     maker=Principal("maker",frozenset({"RESEARCHER"}),frozenset({"identity:review","identity:write"}),frozenset({"venture_capital"}),"oidc","maker-correlation","tenant-a",frozenset({"identity adjudication"}),"identity adjudication")
     main.app.dependency_overrides[authenticate_private_request]=lambda:maker
@@ -38,4 +39,8 @@ def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monk
         with TestClient(main.app) as client:
             response=client.post(f"/identity-review/{item_id}/actions",json={"action":"APPROVE_MATCH","rationale":"Independent review confirms the same evidence package","evidence_ids":[evidence_id],"expected_version":proposal.json()["version"],"review_batch_id":batch_id})
             assert response.status_code==200 and response.json()["resulting_state"]=="ACCEPTED"
+        admin=Principal("admin",frozenset({"ADMIN"}),frozenset({"identity:review","identity:assign"}),frozenset({"venture_capital"}),"oidc","admin-correlation","tenant-a",frozenset({"identity adjudication"}),"identity adjudication");main.app.dependency_overrides[authenticate_private_request]=lambda:admin
+        with TestClient(main.app) as client:
+            revoked=client.post(f"/identity-review/assignments/{maker_assignment_id}/revoke",json={"rationale":"Identity proposal assignment is no longer required"});assert revoked.status_code==200 and revoked.json()["status"]=="REVOKED"
+            closed=client.post(f"/identity-review/batches/{batch_id}/close",json={"rationale":"Identity review session completed and retired"});assert closed.status_code==200 and closed.json()["status"]=="CLOSED"
     finally:main.app.dependency_overrides.clear()

@@ -17,6 +17,7 @@ from pmos_research.dossier import build_dossier
 from pmos_research.adjudication import AdjudicationInputError,StaleReviewError,adjudicate
 from pmos_research.identity_review import build_review_packet
 from pmos_research.identity_review_batch import IdentityReviewBatchError,build_identity_batch_packet,freeze_identity_batch
+from pmos_research.identity_review_assignment import IdentityReviewAssignmentError,assign_identity_reviewer,close_identity_batch,revoke_identity_assignment
 from pmos_research.passage_adjudication import PassageAdjudicationError,adjudicate_passage
 from pmos_research.passage_review import build_passage_packet
 from pmos_research.evidence_routing import EvidenceRoutingError,adjudicate_route
@@ -54,6 +55,12 @@ class IdentityBatchRequest(BaseModel):
     resolution_state:Optional[str]=Field(default=None,max_length=40)
     min_priority:int=Field(default=0,ge=0,le=100)
     limit:int=Field(default=100,ge=1,le=100)
+
+class IdentityAssignmentRequest(BaseModel):
+    reviewer:str=Field(min_length=1,max_length=150)
+    reviewer_role:str=Field(min_length=5,max_length=40)
+    rationale:str=Field(min_length=10,max_length=2000)
+    expires_hours:int=Field(default=24,ge=1,le=168)
 
 class JurisdictionActionRequest(BaseModel):
     action:str=Field(min_length=6,max_length=30)
@@ -221,13 +228,41 @@ def identity_review_batch_detail(batch_id:int,principal:Principal=Depends(authen
         except IdentityReviewBatchError as exc:raise HTTPException(status_code=404,detail=str(exc))
         authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"},packet["criteria"]["universe"]);audit_access(s,principal,"IDENTITY_REVIEW_BATCH_READ",{"batch_id":batch_id,"manifest_hash":packet["manifest_hash"],"manifest_valid":packet["manifest_valid"]});s.commit();return packet
 
+@app.post("/identity-review/batches/{batch_id}/assignments")
+def identity_review_assignment_create(batch_id:int,body:IdentityAssignmentRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_identity_batch_packet(s,batch_id);authorize(principal,"identity:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:assignment=assign_identity_reviewer(s,batch_id,body.reviewer,body.reviewer_role,principal.subject,body.rationale,body.expires_hours)
+        except IdentityReviewAssignmentError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"IDENTITY_REVIEW_ASSIGNED",{"batch_id":batch_id,"assignment_id":assignment.id,"reviewer":assignment.reviewer,"reviewer_role":assignment.reviewer_role,"expires_at":assignment.expires_at.isoformat()});s.commit();return {"id":assignment.id,"batch_id":batch_id,"reviewer":assignment.reviewer,"reviewer_role":assignment.reviewer_role,"status":assignment.status,"expires_at":assignment.expires_at.isoformat()}
+
+@app.post("/identity-review/assignments/{assignment_id}/revoke")
+def identity_review_assignment_revoke(assignment_id:int,body:EvidenceLifecycleRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        from pmos_research.db import IdentityReviewAssignment
+        assignment=s.get(IdentityReviewAssignment,assignment_id)
+        if not assignment:raise HTTPException(status_code=404,detail="unknown identity review assignment")
+        packet=build_identity_batch_packet(s,assignment.batch_id);authorize(principal,"identity:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:assignment=revoke_identity_assignment(s,assignment_id,principal.subject,body.rationale)
+        except IdentityReviewAssignmentError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"IDENTITY_REVIEW_ASSIGNMENT_REVOKED",{"assignment_id":assignment.id,"batch_id":assignment.batch_id});s.commit();return {"id":assignment.id,"status":assignment.status}
+
+@app.post("/identity-review/batches/{batch_id}/close")
+def identity_review_batch_close(batch_id:int,body:EvidenceLifecycleRequest,principal:Principal=Depends(authenticate_private_request)):
+    with SessionLocal() as s:
+        packet=build_identity_batch_packet(s,batch_id);authorize(principal,"identity:assign",{"ADMIN"},packet["criteria"]["universe"])
+        try:batch=close_identity_batch(s,batch_id,principal.subject,body.rationale)
+        except IdentityReviewAssignmentError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        audit_access(s,principal,"IDENTITY_REVIEW_BATCH_CLOSED",{"batch_id":batch.id});s.commit();return {"id":batch.id,"status":batch.status}
+
 @app.post("/identity-review/{item_id}/actions")
 def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Principal=Depends(authenticate_private_request)):
     approval=body.action.upper()=="APPROVE_MATCH";permission="identity:approve" if approval else "identity:write";roles={"REVIEWER","ADMIN"} if approval else {"RESEARCHER","REVIEWER","ADMIN"}
     with SessionLocal() as s:
         packet=build_review_packet(s,item_id)
         authorize(principal,permission,roles,packet["universe"])
-        try:result=adjudicate(s,item_id,body.action,principal.subject,body.rationale,body.evidence_ids,body.expected_version,body.review_batch_id)
+        reviewer_role=next((x for x in ("REVIEWER","RESEARCHER") if x in principal.roles),"UNKNOWN")
+        try:result=adjudicate(s,item_id,body.action,principal.subject,reviewer_role,body.rationale,body.evidence_ids,body.expected_version,body.review_batch_id)
         except StaleReviewError as exc:raise HTTPException(status_code=409,detail=str(exc))
         except AdjudicationInputError as exc:raise HTTPException(status_code=422,detail=str(exc))
         audit_access(s,principal,"IDENTITY_REVIEW_ACTION",{"item_id":item_id,"review_batch_id":body.review_batch_id,"action":body.action.upper(),"resulting_state":result["resulting_state"],"evidence_count":len(set(body.evidence_ids))});s.commit();return result

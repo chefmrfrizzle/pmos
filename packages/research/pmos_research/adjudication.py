@@ -9,7 +9,7 @@ from sqlalchemy import select
 from .db import (
     AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, Evidence,
     DiligenceCase, IdentityCluster, IdentityMembership, RawImportRow,
-    ResolutionDecision, ReviewQueueItem,IdentityReviewDecisionBinding,
+    ResolutionDecision, ReviewQueueItem,IdentityReviewDecisionAuthorization,IdentityReviewDecisionBinding,
 )
 from .fact_extraction import identity_supported
 from .evidence_capture import capture_official_identity_evidence
@@ -85,7 +85,7 @@ def _create_proposed_cluster(session,item:ReviewQueueItem,decision:ResolutionDec
         return cluster
     raise AdjudicationInputError("queue item does not contain two identity candidates")
 
-def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,evidence_ids=(),expected_version:str|None=None,review_batch_id:int|None=None):
+def adjudicate(session,queue_item_id:int,action:str,reviewer:str,reviewer_role:str,rationale:str,evidence_ids=(),expected_version:str|None=None,review_batch_id:int|None=None):
     """Append a reviewer decision; never overwrite source entities or prior events."""
     if not reviewer.strip() or not rationale.strip():raise AdjudicationInputError("reviewer and rationale are required")
     item=session.get(ReviewQueueItem,queue_item_id)
@@ -98,6 +98,9 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
     from .identity_review_batch import IdentityReviewBatchError,validate_identity_assignment
     try:batch_item=validate_identity_assignment(session,review_batch_id,item,decision,action)
     except IdentityReviewBatchError as exc:raise AdjudicationInputError(str(exc)) from exc
+    from .identity_review_assignment import IdentityReviewAssignmentError,require_identity_assignment
+    try:assignment=require_identity_assignment(session,review_batch_id,reviewer,reviewer_role,action=="APPROVE_MATCH")
+    except IdentityReviewAssignmentError as exc:raise AdjudicationInputError(str(exc)) from exc
     allowed={
         "PENDING":{"PROPOSE_MATCH":"PROPOSED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT","DEFER":"DEFERRED"},
         "DEFERRED":{"PROPOSE_MATCH":"PROPOSED","REJECT_MATCH":"REJECTED","MARK_CONFLICT":"CONFLICT"},
@@ -124,9 +127,9 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
             for membership in session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)):
                 membership.status=cluster.status;membership.decided_by=reviewer;membership.decided_at=datetime.now(timezone.utc)
     result=allowed[prior][action];now=datetime.now(timezone.utc)
-    event=AdjudicationEvent(queue_item_id=item.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale,evidence_hash=digest);session.add(event);session.flush();session.add(IdentityReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id))
+    event=AdjudicationEvent(queue_item_id=item.id,action=action,prior_state=prior,resulting_state=result,reviewer=reviewer,rationale=rationale,evidence_hash=digest);session.add(event);session.flush();session.add(IdentityReviewDecisionBinding(batch_item_id=batch_item.id,adjudication_event_id=event.id));session.add(IdentityReviewDecisionAuthorization(adjudication_event_id=event.id,assignment_id=assignment.id))
     from .db import IdentityReviewBatch
-    append_ledger_event(session,"IDENTITY_REVIEW",item.id,reviewer,"REVIEWER",action,{"prior_state":prior,"resulting_state":result,"review_batch_id":review_batch_id,"review_batch_manifest_hash":session.get(IdentityReviewBatch,review_batch_id).manifest_hash,"evidence_hash":digest,"rationale":rationale})
+    append_ledger_event(session,"IDENTITY_REVIEW",item.id,reviewer,reviewer_role.upper(),action,{"prior_state":prior,"resulting_state":result,"review_batch_id":review_batch_id,"assignment_id":assignment.id,"review_batch_manifest_hash":session.get(IdentityReviewBatch,review_batch_id).manifest_hash,"evidence_hash":digest,"rationale":rationale})
     item.status=result;item.updated_at=now
     session.flush()
     return {"queue_item_id":item.id,"prior_state":prior,"resulting_state":result,"version":_version(item)}

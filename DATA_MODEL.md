@@ -20,6 +20,8 @@ Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `
 
 `IdentityReviewBatch` freezes a scoped priority queue into a deterministic privacy-safe manifest. `IdentityReviewBatchItem` retains the queue-item version, resolution state, priority, queue type, and a one-way fingerprint of the exact identity pair. `IdentityReviewDecisionBinding` requires proposal and approval to use the same frozen item; it stores no private names or raw source rows.
 
+`IdentityReviewAssignment` grants a named reviewer a bounded role and expiry on one identity batch. Assignment events retain issuance, expiry, revocation, and closure. `IdentityReviewDecisionAuthorization` links every decision to the exact grant used, allowing assurance to prove authorization at decision time even after the grant is revoked.
+
 An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.
 
 `RelationshipAssertion` is the controlled graph-edge model. It retains effective dates, jurisdiction, sensitivity, proposer/reviewer separation, review rationale, and links to source documents and exact passages. `RelationshipAdjudicationEvent` preserves proposal, deferral, rejection, and approval history with a deterministic evidence-package hash. Sensitive ownership/control/trustee edges require dispositive primary evidence; graph display must never treat a legacy or candidate edge as specialist-verified. Confidence is derived transparently from source rank, independence, freshness, scope, and passage integrity.
