@@ -11,6 +11,7 @@ from .db import (
     ResolutionDecision, ReviewQueueItem,
 )
 from .fact_extraction import identity_supported
+from .evidence_capture import capture_official_identity_evidence
 from .audit_ledger import append_ledger_event
 
 PRIORITY_TYPES={"venture capital","private equity","corporate venture capital","family office","asset manager","hedge fund","government","limited partner","pension","sovereign wealth"}
@@ -159,20 +160,24 @@ def run_corroboration_job(session,job:CorroborationJob,adapter)->str:
         status=snapshot.get("status","failed")
         if status!="ok":
             job.status="BLOCKED" if status.startswith("robots_") else "NEEDS_REVIEW"
-            job.last_error=status;return job.status
+            job.last_error=status;append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_COMPLETED",{"entity_id":job.entity_id,"status":job.status,"reason":status});return job.status
         source_url=snapshot["url"];content_hash=snapshot["hash"]
         duplicate=session.scalar(select(Evidence).where(Evidence.entity_id==entity.id,Evidence.source_url==source_url,Evidence.content_hash==content_hash))
         if not duplicate:session.add(Evidence(entity_id=entity.id,source_url=source_url,source_type="official",content_hash=content_hash,title=snapshot["title"],text_excerpt=snapshot["text"][:5000],confidence=.9))
         supported=identity_supported(entity.name,snapshot["title"]+" "+snapshot["text"][:10000])
         if supported:
             existing=session.scalar(select(Claim).where(Claim.entity_id==entity.id,Claim.field=="official_identity",Claim.value==entity.name,Claim.source_url==source_url,Claim.evidence_hash==content_hash))
-            if not existing:session.add(Claim(entity_id=entity.id,field="official_identity",value=entity.name,source_url=source_url,source_type="official",confidence=.9,verification_status="SUPPORTED",extractor="deterministic_identity_v1",evidence_hash=content_hash))
+            if not existing:
+                existing=Claim(entity_id=entity.id,field="official_identity",value=entity.name,source_url=source_url,source_type="official",confidence=.9,verification_status="SUPPORTED",extractor="deterministic_identity_v2",evidence_hash=content_hash);session.add(existing);session.flush()
+            captured=capture_official_identity_evidence(session,entity,existing,source_url,content_hash,snapshot["title"],snapshot["text"][:10000])
             # This supports only the official-identity claim. Entity-level status is
             # a field-coverage roll-up and must never be promoted by one homepage hit.
             job.status="SUPPORTED";entity.verification_status="EVIDENCE_COLLECTED";entity.evidence_confidence=max(entity.evidence_confidence,35)
         else:
             job.status="HUMAN_REVIEW_REQUIRED";entity.verification_status="EVIDENCE_COLLECTED";entity.evidence_confidence=max(entity.evidence_confidence,35)
-        job.checkpoint_json=json.dumps({"source_url":source_url,"evidence_hash":content_hash,"identity_supported":supported},sort_keys=True)
-        job.last_error=None;return job.status
+        checkpoint={"source_url":source_url,"evidence_hash":content_hash,"identity_supported":supported}
+        if supported:checkpoint.update(captured)
+        job.checkpoint_json=json.dumps(checkpoint,sort_keys=True)
+        job.last_error=None;append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_COMPLETED",{"entity_id":job.entity_id,"status":job.status,"evidence_hash":content_hash,"identity_supported":supported});return job.status
     except Exception as exc:
-        job.status="FAILED";job.last_error=f"{type(exc).__name__}: {exc}"[:1000];return job.status
+        job.status="FAILED";job.last_error=f"{type(exc).__name__}: {exc}"[:1000];append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_FAILED",{"entity_id":job.entity_id,"status":job.status,"error_type":type(exc).__name__});return job.status

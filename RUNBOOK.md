@@ -40,7 +40,7 @@ PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
 ```
 
 Cases begin with mandatory checks in `NOT_STARTED`. Creation is intake, not diligence completion or endorsement.
-The initializer also queues official-domain corroboration only for the selected public-registry cohort. Run those jobs in bounded batches; retrieval alone never completes a diligence check.
+The initializer also queues official-domain corroboration only for the selected public-registry cohort. Run those jobs explicitly with `scripts/run_corroboration_jobs.py --case-cohort --limit 10`; without the filter the worker processes the oldest pending job globally. Retrieval alone never completes a diligence check.
 
 ## Audit ledger
 
@@ -54,3 +54,14 @@ PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
 ```
 
 The baseline does not invent historical actors. SQLite rejects `UPDATE` and `DELETE` against ledger rows. A failed ledger verification is a security incident: stop adjudication/export, preserve the database and logs, and investigate before resuming.
+
+## Evidence-passage backfill
+
+After upgrading an older datastore, bind existing supported official-identity claims to exact passages without changing their status:
+
+```bash
+PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
+  ./.venv/bin/python scripts/backfill_identity_passages.py
+```
+
+Back up the database first. Review `missing_snapshot` and `passage_not_found` outcomes manually; never substitute a generic passage or promote the claim to make reconciliation pass.

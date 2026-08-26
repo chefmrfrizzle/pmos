@@ -23,6 +23,8 @@ Exports resolve beneath `PMOS_PRIVATE_ROOT`, reject repository and symlink escap
 ## Remaining assurance gates
 
 - scan staged blobs, Git history, browser bundles, source maps, deployment manifests, screenshots, dependencies, and SBOM before release
-- pin/revalidate crawler peer IPs and cap streamed/decompressed data to mitigate DNS rebinding and decompression attacks
+- pin/revalidate crawler peer IPs and enforce an operating-system egress policy to mitigate DNS rebinding
 - cap import file size, archive expansion, rows, columns, cells, runtime, and batch quotas; encrypt private storage
 - complete external threat modeling, penetration testing, privacy retention/deletion, and incident-response exercises before institutional deployment
+
+The crawler accepts only default HTTP/HTTPS ports, ignores process proxy variables, revalidates every redirect, applies separate connection/read/pool timeouts, and caps declared, downloaded, and decompressed response bytes while streaming. DNS-to-connected-peer pinning and an operating-system egress firewall remain required defense-in-depth for production research workers.

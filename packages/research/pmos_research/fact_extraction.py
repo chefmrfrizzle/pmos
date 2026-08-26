@@ -16,6 +16,31 @@ def identity_supported(name:str,text:str)->bool:
     required=1 if len(tokens)==1 else min(2,len(tokens))
     return bool(tokens) and sum(token in haystack for token in set(tokens))>=required
 
+def identity_evidence_passage(name:str,title:str,text:str,max_chars:int=700)->dict|None:
+    """Return one bounded, inspectable passage; never synthesize missing support."""
+    if identity_supported(name,title):
+        passage=" ".join((title or "").split())[:max_chars]
+        return {"passage":passage,"section":"document title","start_offset":None,"end_offset":None,"directness":.95}
+    compact=" ".join((text or "").split())
+    if not identity_supported(name,compact):return None
+    stop={"the","and","of","capital","group","company","management","investment","investments","partners"}
+    tokens=[x for x in re.findall(r"[a-z0-9]+",(name or "").casefold()) if len(x)>2 and x not in stop]
+    positions=[]
+    lower=compact.casefold()
+    for token in set(tokens):
+        match=re.search(rf"\b{re.escape(token)}\b",lower)
+        if match:positions.append(match.start())
+    if not positions:return None
+    center=min(positions);start=max(0,center-max_chars//3);end=min(len(compact),start+max_chars)
+    if start:
+        boundary=compact.find(" ",start);start=boundary+1 if boundary!=-1 else start
+    if end<len(compact):
+        boundary=compact.rfind(" ",start,end);end=boundary if boundary>start else end
+    passage=compact[start:end].strip()
+    if not identity_supported(name,passage):
+        start=max(0,min(positions)-100);end=min(len(compact),max(positions)+250);passage=compact[start:end].strip()
+    return {"passage":passage,"section":"body","start_offset":start,"end_offset":end,"directness":.9}
+
 def discover_same_domain_links(base_url: str, html: str, limit: int = 12) -> list[str]:
     soup=BeautifulSoup(html,"html.parser")
     base_host=urlparse(base_url).netloc.lower().removeprefix("www.")

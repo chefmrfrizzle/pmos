@@ -1,15 +1,16 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import detect_header, import_csv
-from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, Contact, CorroborationJob, Entity, IdentityCluster, IdentityMembership, ImportBatch, RawImportRow, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
+from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, RawImportRow, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
 from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
 from pmos_research.audit_ledger import append_ledger_event,verify_ledger
 from pmos_research.relationship_controls import propose_relationship,verify_relationship
-from pmos_research.adapters.official_web import OfficialWebAdapter, UnsafeResearchTarget
-from pmos_research.fact_extraction import identity_supported
+from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooLarge, UnsafeResearchTarget
+from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
 import pytest
+import httpx
 from sqlalchemy import create_engine, func, select, update
 from sqlalchemy.exc import DatabaseError
 from sqlalchemy.orm import sessionmaker
@@ -100,6 +101,15 @@ def test_official_adapter_rejects_private_network_targets():
     adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("127.0.0.1",80))])
     with pytest.raises(UnsafeResearchTarget):adapter._validate_url("http://example.test/")
 
+def test_official_adapter_rejects_alternate_ports():
+    adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",8443))])
+    with pytest.raises(UnsafeResearchTarget):adapter._validate_url("https://example.test:8443/")
+
+def test_official_adapter_streams_with_decompressed_size_cap():
+    adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))]);adapter.max_bytes=65536;adapter.delay=.5
+    adapter.client=httpx.Client(transport=httpx.MockTransport(lambda request:httpx.Response(200,content=b"x"*70000,headers={"content-type":"text/html"})),trust_env=False)
+    with pytest.raises(ResponseTooLarge):adapter._get("https://example.test/")
+
 def test_robots_failure_is_fail_closed():
     adapter=OfficialWebAdapter(resolver=lambda *args,**kwargs:[(None,None,None,None,("93.184.216.34",443))])
     class Broken:
@@ -110,6 +120,11 @@ def test_robots_failure_is_fail_closed():
 def test_identity_support_requires_meaningful_name_tokens():
     assert identity_supported("Northstar Collection","About Northstar Collection")
     assert not identity_supported("Northstar Collection","Generic institutional investment page")
+
+def test_identity_passage_is_bounded_and_never_invents_support():
+    result=identity_evidence_passage("Northstar Collection","About","Intro. Northstar Collection is an institutional example. "+"context "*200)
+    assert result and len(result["passage"])<=700 and identity_supported("Northstar Collection",result["passage"])
+    assert identity_evidence_passage("Northstar Collection","Generic","Unrelated institutional page") is None
 
 def test_successful_fetch_does_not_verify_identity_without_name_support():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
@@ -136,6 +151,11 @@ def test_homepage_match_supports_claim_but_not_whole_entity():
         assert run_corroboration_job(db,job,OfficialPage())=="SUPPORTED"
         assert entity.verification_status=="EVIDENCE_COLLECTED"
         assert db.scalar(select(func.count()).select_from(Claim).where(Claim.verification_status=="SUPPORTED"))==1
+        assert db.scalar(select(func.count()).select_from(SourceDocument))==1
+        assert db.scalar(select(func.count()).select_from(EvidencePassage))==1
+        assert db.scalar(select(func.count()).select_from(ClaimEvidence))==1
+        checkpoint=__import__("json").loads(job.checkpoint_json)
+        assert {"document_id","passage_id","claim_evidence_id"}<=checkpoint.keys()
 
 def test_diligence_case_has_type_specific_mandatory_checks():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
