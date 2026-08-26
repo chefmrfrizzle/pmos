@@ -1,12 +1,14 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import detect_header, import_csv
-from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, RawImportRow, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
+from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
 from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
 from pmos_research.audit_ledger import append_ledger_event,verify_ledger
 from pmos_research.relationship_controls import propose_relationship,verify_relationship
+from pmos_research.registry_research import assess_lei_candidate,persist_lei_candidate
+from pmos_research.registry_adjudication import IdentifierAdjudicationError,adjudicate_identifier
 from pmos_research.adapters.official_web import OfficialWebAdapter, ResponseTooLarge, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_evidence_passage,identity_supported
 import pytest
@@ -290,3 +292,52 @@ def test_relationship_verification_accepts_s0_or_independent_corroboration():
         ordinary=propose_relationship(db,source.id,target.id,"ADVISES","maker",[x.id for x in documents])
         verify_relationship(db,ordinary.id,"checker","independent sources corroborate the advisory relationship")
         assert ordinary.status=="SPECIALIST_VERIFIED"
+
+def _lei_record(**overrides):
+    value={"lei":"549300EXAMPLE0000001","legal_name":"Example Capital Limited","entity_status":"ACTIVE","jurisdiction":"CA","legal_address_country":"CA","legal_form_id":"8888","registration_authority_id":"RA000071","registration_authority_entity_id":"12345","lei_registration_status":"ISSUED","initial_registration_date":"2020-01-01","last_update_date":"2026-01-01","next_renewal_date":"2027-01-01","record_url":"https://api.gleif.org/api/v1/lei-records/549300EXAMPLE0000001","content_hash":"e"*64}
+    value.update(overrides);return value
+
+def test_lei_candidate_is_never_auto_accepted_as_identifier():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example Capital Limited",canonical_name="example capital",universe="private_equity",country="CA");db.add(entity);db.flush()
+        state,confidence,reasons=assess_lei_candidate(entity,_lei_record())
+        assert state=="PROBABLE_MATCH" and confidence==.92
+        candidate,created=persist_lei_candidate(db,entity,_lei_record())
+        assert created and candidate.status=="PENDING_REVIEW" and candidate.match_state=="PROBABLE_MATCH"
+        assert db.scalar(select(func.count()).select_from(LegalIdentifier))==0
+        claim=db.get(Claim,candidate.claim_id);assert claim.verification_status=="CANDIDATE"
+        assert db.scalar(select(func.count()).select_from(ClaimEvidence).where(ClaimEvidence.claim_id==claim.id))==1
+        same,created=persist_lei_candidate(db,entity,_lei_record());assert same.id==candidate.id and not created
+
+def test_lei_jurisdiction_conflict_fails_closed():
+    entity=Entity(name="Example Capital Limited",canonical_name="example capital",universe="private_equity",country="CA")
+    state,confidence,reasons=assess_lei_candidate(entity,_lei_record(jurisdiction="US-DE",legal_address_country="US"))
+    assert state=="CONFLICT" and confidence==.25 and "conflicting jurisdiction" in reasons
+
+def _supported_identity(db,entity):
+    document=SourceDocument(entity_id=entity.id,publisher="official.example",publisher_independence_group="official.example",source_rank="S1",source_type="official_website",source_url="https://official.example",content_hash="f"*64);db.add(document);db.flush()
+    passage=EvidencePassage(document_id=document.id,section="title",passage=entity.name,passage_hash="a"*64);db.add(passage);db.flush()
+    claim=Claim(entity_id=entity.id,field="official_identity",value=entity.name,source_url=document.source_url,source_type="official",confidence=.9,verification_status="SUPPORTED",extractor="test",evidence_hash=document.content_hash);db.add(claim);db.flush();db.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=.95,supports=True));db.flush()
+
+def test_identifier_acceptance_requires_two_stage_review_and_separate_identity_evidence():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example Capital Limited",canonical_name="example capital",universe="private_equity",country="CA");db.add(entity);db.flush()
+        candidate,_=persist_lei_candidate(db,entity,_lei_record())
+        with pytest.raises(IdentifierAdjudicationError):adjudicate_identifier(db,candidate.id,"PROPOSE_ACCEPTANCE","maker","registry match",candidate.status)
+        _supported_identity(db,entity)
+        adjudicate_identifier(db,candidate.id,"PROPOSE_ACCEPTANCE","maker","legal name and jurisdiction align with separate official identity evidence","PENDING_REVIEW")
+        with pytest.raises(IdentifierAdjudicationError):adjudicate_identifier(db,candidate.id,"APPROVE","maker","self approval","PROPOSED_ACCEPTANCE")
+        adjudicate_identifier(db,candidate.id,"APPROVE","checker","independent review confirms the scoped LEI identity","PROPOSED_ACCEPTANCE")
+        identifier=db.scalar(select(LegalIdentifier));assert identifier.status=="SPECIALIST_VERIFIED"
+        accepted=db.get(Claim,identifier.claim_id);assert accepted.field=="lei" and accepted.verification_status=="SPECIALIST_VERIFIED"
+        assert db.scalar(select(func.count()).select_from(ClaimEvidence).where(ClaimEvidence.claim_id==accepted.id))==1
+        assert verify_ledger(db,"IDENTIFIER_REVIEW",candidate.id)["valid"]
+
+def test_possible_identifier_candidate_cannot_be_proposed():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example Capital",canonical_name="example capital",universe="private_equity",country="CA");db.add(entity);db.flush();_supported_identity(db,entity)
+        candidate,_=persist_lei_candidate(db,entity,_lei_record(legal_name="Example Capital Management"));candidate.match_state="POSSIBLE_MATCH"
+        with pytest.raises(IdentifierAdjudicationError):adjudicate_identifier(db,candidate.id,"PROPOSE_ACCEPTANCE","maker","needs acceptance","PENDING_REVIEW")

@@ -404,6 +404,35 @@ class RelationshipAssertionEvidence(Base):
     evidence_passage_id: Mapped[Optional[int]] = mapped_column(ForeignKey("evidence_passages.id"), nullable=True)
     __table_args__ = (UniqueConstraint("relationship_assertion_id", "source_document_id", "evidence_passage_id", name="uq_relationship_assertion_evidence"),)
 
+class RegistryIdentifierCandidate(Base):
+    __tablename__ = "registry_identifier_candidates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    identifier_type: Mapped[str] = mapped_column(String(40), index=True)
+    identifier_value: Mapped[str] = mapped_column(String(250), index=True)
+    legal_name: Mapped[str] = mapped_column(String(300))
+    jurisdiction: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    registry_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_document_id: Mapped[int] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), index=True)
+    match_state: Mapped[str] = mapped_column(String(40), index=True)
+    confidence: Mapped[float] = mapped_column(Float)
+    reasons_json: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(40), default="PENDING_REVIEW", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("entity_id", "identifier_type", "identifier_value", name="uq_entity_registry_identifier_candidate"),)
+
+class IdentifierAdjudicationEvent(Base):
+    __tablename__ = "identifier_adjudication_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_id: Mapped[int] = mapped_column(ForeignKey("registry_identifier_candidates.id"), index=True)
+    action: Mapped[str] = mapped_column(String(40), index=True)
+    prior_state: Mapped[str] = mapped_column(String(40))
+    resulting_state: Mapped[str] = mapped_column(String(40))
+    reviewer: Mapped[str] = mapped_column(String(150))
+    rationale: Mapped[str] = mapped_column(Text)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 def install_ledger_guards(target_engine) -> None:
     if target_engine.dialect.name=="sqlite":
         with target_engine.begin() as connection:

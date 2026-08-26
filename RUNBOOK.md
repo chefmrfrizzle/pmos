@@ -65,3 +65,14 @@ PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
 ```
 
 Back up the database first. Review `missing_snapshot` and `passage_not_found` outcomes manually; never substitute a generic passage or promote the claim to make reconciliation pass.
+
+## LEI candidate research
+
+Create structured, review-only GLEIF candidates for public-registry diligence cases:
+
+```bash
+PMOS_DB_URL='sqlite:////absolute/private/path/pmos.db' \
+  ./.venv/bin/python scripts/research_lei_candidates.py --limit 32
+```
+
+The command emits aggregate counts only. Candidate order is not precedence. `PROBABLE_MATCH` still requires separate official identity evidence, a maker proposal, and independent approval. Possible, conflicting, or review-required candidates cannot enter the accepted legal-identifier table.
