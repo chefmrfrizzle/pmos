@@ -262,6 +262,30 @@ def test_adjudication_rejects_stale_review_version():
         with pytest.raises(StaleReviewError):adjudicate(db,item.id,"DEFER","reviewer","needs more evidence",expected_version="stale")
         assert item.status=="PENDING"
 
+def test_identity_proposal_rejects_overlapping_active_cluster():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        item,evidence=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id)
+        unrelated=Entity(name="Other Capital",canonical_name="other capital",universe="test");db.add(unrelated);db.flush()
+        cluster=IdentityCluster(identity_type="ENTITY",canonical_label="Other Capital",status="ACCEPTED",created_by="prior-maker");db.add(cluster);db.flush()
+        db.add_all([IdentityMembership(cluster_id=cluster.id,entity_id=decision.candidate_entity_id,status="ACCEPTED",match_basis_json="[]",confidence=1,decided_by="prior-checker"),IdentityMembership(cluster_id=cluster.id,entity_id=unrelated.id,status="ACCEPTED",match_basis_json="[]",confidence=1,decided_by="prior-checker")]);db.flush()
+        with pytest.raises(AdjudicationInputError,match="already belongs"):
+            adjudicate(db,item.id,"PROPOSE_MATCH","maker","Candidate appears to match but has an existing cluster",evidence_ids=[evidence.id])
+        assert item.status=="PENDING"
+
+def test_identity_approval_requires_the_exact_reviewed_pair_cluster():
+    import hashlib
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        item,evidence=_review_fixture(db);decision=db.get(ResolutionDecision,item.resolution_decision_id)
+        unrelated=Entity(name="Other Capital",canonical_name="other capital",universe="test");db.add(unrelated);db.flush()
+        cluster=IdentityCluster(identity_type="ENTITY",canonical_label="Wrong Pair",status="PROPOSED",created_by="maker");db.add(cluster);db.flush()
+        db.add_all([IdentityMembership(cluster_id=cluster.id,entity_id=decision.candidate_entity_id,status="PROPOSED",match_basis_json="[]",confidence=1),IdentityMembership(cluster_id=cluster.id,entity_id=unrelated.id,status="PROPOSED",match_basis_json="[]",confidence=.8)])
+        item.status="PROPOSED";digest=hashlib.sha256(evidence.content_hash.encode()).hexdigest();db.add(AdjudicationEvent(queue_item_id=item.id,action="PROPOSE_MATCH",prior_state="PENDING",resulting_state="PROPOSED",reviewer="maker",rationale="legacy proposal",evidence_hash=digest));db.flush()
+        with pytest.raises(AdjudicationInputError,match="no proposed identity cluster"):
+            adjudicate(db,item.id,"APPROVE_MATCH","checker","Independent review must not approve a cluster sharing only one member",evidence_ids=[evidence.id])
+        assert cluster.status=="PROPOSED" and item.status=="PROPOSED"
+
 def test_shadow_audit_only_retains_exact_matches_meeting_strict_identity_controls():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:

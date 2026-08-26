@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from pmos_research.control_assurance import persist_assurance_run,run_control_assurance
-from pmos_research.db import Base,Claim,ClaimEvidence,ControlAssuranceRun,Entity,EvidencePassage,ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument
+from pmos_research.db import Base,Claim,ClaimEvidence,ControlAssuranceRun,Entity,EvidencePassage,IdentityCluster,IdentityMembership,ResearchDocumentSnapshot,ResearchSourceCandidate,SourceDocument
 
 def _clean_fixture(db):
     entity=Entity(name="Private Example Name",canonical_name="private example name",universe="test");db.add(entity);db.flush()
@@ -26,4 +26,13 @@ def test_control_assurance_fails_closed_on_hash_tampering():
     with factory() as db:
         snapshot=_clean_fixture(db);snapshot.text_hash="0"*64;db.commit();result=run_control_assurance(db)
         control=next(x for x in result["controls"] if x["control"]=="research_snapshot_hash_integrity")
+        assert result["status"]=="FAIL" and control["exceptions"]==1
+
+def test_control_assurance_detects_identity_membership_in_competing_clusters():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        first=Entity(name="First",canonical_name="first",universe="test");second=Entity(name="Second",canonical_name="second",universe="test");third=Entity(name="Third",canonical_name="third",universe="test");db.add_all([first,second,third]);db.flush()
+        one=IdentityCluster(identity_type="ENTITY",canonical_label="One",status="PROPOSED",created_by="maker-a");two=IdentityCluster(identity_type="ENTITY",canonical_label="Two",status="PROPOSED",created_by="maker-b");db.add_all([one,two]);db.flush()
+        db.add_all([IdentityMembership(cluster_id=one.id,entity_id=first.id,status="PROPOSED",confidence=1),IdentityMembership(cluster_id=one.id,entity_id=second.id,status="PROPOSED",confidence=.9),IdentityMembership(cluster_id=two.id,entity_id=first.id,status="PROPOSED",confidence=1),IdentityMembership(cluster_id=two.id,entity_id=third.id,status="PROPOSED",confidence=.8)]);db.flush()
+        result=run_control_assurance(db);control=next(x for x in result["controls"] if x["control"]=="active_identity_pair_exclusivity")
         assert result["status"]=="FAIL" and control["exceptions"]==1

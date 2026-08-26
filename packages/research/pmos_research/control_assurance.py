@@ -42,8 +42,19 @@ def run_control_assurance(session)->dict:
     accepted=session.scalars(select(IdentityCluster).where(IdentityCluster.status=="ACCEPTED")).all();bad=0
     for cluster in accepted:
         members=session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)).all()
-        bad+=len(members)<2 or any(x.status!="ACCEPTED" or not x.decided_by for x in members) or any(x.decided_by==cluster.created_by for x in members)
+        bad+=len(members)!=2 or any(x.status!="ACCEPTED" or not x.decided_by for x in members) or any(x.decided_by==cluster.created_by for x in members)
     controls.append(_control("accepted_identity_cluster_maker_checker",len(accepted),bad))
+
+    active=session.scalars(select(IdentityCluster).where(IdentityCluster.status.in_(("PROPOSED","ACCEPTED")))).all();membership_counts={};bad=0;population=0
+    for cluster in active:
+        members=session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)).all();population+=len(members)
+        if len(members)!=2:bad+=1
+        for member in members:
+            value=member.entity_id if cluster.identity_type=="ENTITY" else member.contact_id
+            if value is None:bad+=1;continue
+            key=(cluster.identity_type,value);membership_counts[key]=membership_counts.get(key,0)+1
+    bad+=sum(count-1 for count in membership_counts.values() if count>1)
+    controls.append(_control("active_identity_pair_exclusivity",population,bad))
 
     identifiers=session.scalars(select(LegalIdentifier).where(LegalIdentifier.status=="SPECIALIST_VERIFIED")).all();bad=0
     for identifier in identifiers:

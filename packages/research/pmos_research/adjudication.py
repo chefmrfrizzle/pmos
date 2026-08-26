@@ -42,7 +42,32 @@ def _review_identity_ids(session,item:ReviewQueueItem,decision:ResolutionDecisio
         ids.update(x.entity_id for x in contacts if x and x.entity_id)
     return ids
 
+def _identity_pair(session,item:ReviewQueueItem,decision:ResolutionDecision)->tuple[str,set[int]]:
+    raw=session.get(RawImportRow,decision.raw_row_id)
+    if item.queue_type=="ENTITY":kind="ENTITY";ids={x for x in (decision.candidate_entity_id,raw.entity_id if raw else None) if x}
+    elif item.queue_type=="CONTACT":kind="PERSON";ids={x for x in (decision.candidate_contact_id,raw.contact_id if raw else None) if x}
+    else:raise AdjudicationInputError("queue item is not an adjudicable identity pair")
+    if len(ids)!=2:raise AdjudicationInputError("identity review requires two distinct candidates")
+    return kind,ids
+
+def _member_ids(session,cluster:IdentityCluster)->set[int]:
+    rows=session.scalars(select(IdentityMembership).where(IdentityMembership.cluster_id==cluster.id)).all()
+    return {x.entity_id if cluster.identity_type=="ENTITY" else x.contact_id for x in rows if (x.entity_id if cluster.identity_type=="ENTITY" else x.contact_id) is not None}
+
+def _exact_pair_cluster(session,item:ReviewQueueItem,decision:ResolutionDecision,status:str)->IdentityCluster|None:
+    kind,ids=_identity_pair(session,item,decision);column=IdentityMembership.entity_id if kind=="ENTITY" else IdentityMembership.contact_id
+    clusters=session.scalars(select(IdentityCluster).join(IdentityMembership).where(IdentityCluster.identity_type==kind,IdentityCluster.status==status,column.in_(ids)).distinct()).all()
+    exact=[x for x in clusters if _member_ids(session,x)==ids]
+    if len(exact)>1:raise AdjudicationInputError("multiple proposed clusters exist for the reviewed identity pair")
+    return exact[0] if exact else None
+
+def _assert_pair_available(session,item:ReviewQueueItem,decision:ResolutionDecision)->None:
+    kind,ids=_identity_pair(session,item,decision);column=IdentityMembership.entity_id if kind=="ENTITY" else IdentityMembership.contact_id
+    conflict=session.scalar(select(IdentityCluster).join(IdentityMembership).where(IdentityCluster.identity_type==kind,IdentityCluster.status.in_(("PROPOSED","ACCEPTED")),column.in_(ids)).limit(1))
+    if conflict:raise AdjudicationInputError("an identity candidate already belongs to an active or accepted cluster")
+
 def _create_proposed_cluster(session,item:ReviewQueueItem,decision:ResolutionDecision,reviewer:str):
+    _assert_pair_available(session,item,decision)
     raw=session.get(RawImportRow,decision.raw_row_id)
     if item.queue_type=="ENTITY" and raw and raw.entity_id and decision.candidate_entity_id:
         candidate=session.get(Entity,decision.candidate_entity_id);source=session.get(Entity,raw.entity_id)
@@ -85,12 +110,8 @@ def adjudicate(session,queue_item_id:int,action:str,reviewer:str,rationale:str,e
         proposal=next((x for x in reversed(prior_events) if x.action=="PROPOSE_MATCH"),None)
         if not proposal or not secrets.compare_digest(proposal.evidence_hash or "",digest or ""):raise AdjudicationInputError("approval must review the proposal evidence package")
     if action=="PROPOSE_MATCH":_create_proposed_cluster(session,item,decision,reviewer)
-    if action in {"APPROVE_MATCH","REJECT_MATCH","MARK_CONFLICT"}:
-        cluster=session.scalar(select(IdentityCluster).join(IdentityMembership).where(
-            IdentityMembership.entity_id.in_([x for x in [decision.candidate_entity_id,session.get(RawImportRow,decision.raw_row_id).entity_id] if x]) if item.queue_type=="ENTITY" else
-            IdentityMembership.contact_id.in_([x for x in [decision.candidate_contact_id,session.get(RawImportRow,decision.raw_row_id).contact_id] if x]),
-            IdentityCluster.status=="PROPOSED",
-        ).order_by(IdentityCluster.id.desc()))
+    if prior=="PROPOSED" and action in {"APPROVE_MATCH","REJECT_MATCH","MARK_CONFLICT"}:
+        cluster=_exact_pair_cluster(session,item,decision,"PROPOSED")
         if action=="APPROVE_MATCH" and not cluster:raise AdjudicationInputError("no proposed identity cluster exists")
         if cluster:
             cluster.status="ACCEPTED" if action=="APPROVE_MATCH" else "REJECTED"

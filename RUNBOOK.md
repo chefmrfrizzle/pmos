@@ -54,7 +54,7 @@ The command outputs counts and reason categories only. It does not print identit
 
 Accepted identity matches use two stages: `PROPOSE_MATCH` by the maker, then `APPROVE_MATCH` by a different reviewer. Rejections, conflicts, evidence references, rationale, and prior/resulting states remain append-only events. A stale version must be reloaded instead of overwritten.
 
-Use authenticated `GET /identity-review` to request a bounded, priority-ordered queue and `POST /identity-review/{item_id}/actions` to act. Proposals and approvals must include the scoped evidence IDs shown in the packet; approval must use the same evidence package as the proposal. Never work around a 409 stale-version or 422 evidence-scope response. `GET /diligence-cases/{case_id}/dossier` returns the classified review dossier and requires the separate `dossiers:read` permission.
+Use authenticated `GET /identity-review` to request a bounded, priority-ordered queue and `POST /identity-review/{item_id}/actions` to act. Proposals and approvals must include the scoped evidence IDs shown in the packet; approval must use the same evidence package as the proposal. Never work around a 409 stale-version or 422 evidence-scope response. Triage by documented risk with `resolution_state=PROBABLE_MATCH`, `queue_type=ENTITY`, and an explicit `min_priority`. The packet reports distinct-pair, active-cluster, and exact-proposal controls. A proposal fails if either candidate belongs to another proposed or accepted cluster; approval succeeds only for the exact reviewed pair. Never clear an overlap merely to process the queue. `GET /diligence-cases/{case_id}/dossier` returns the classified review dossier and requires the separate `dossiers:read` permission.
 
 ## Bounded institutional cohort
 

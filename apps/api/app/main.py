@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,ResearchPassageCandidate,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,ExportRequest,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SourceChangeEvent,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -115,17 +115,20 @@ def audit_access(session,principal:Principal,action:str,payload:dict):
     append_ledger_event(session,"API_ACCESS",principal.subject,principal.subject,",".join(sorted(principal.roles)),action,{**payload,"tenant_id":principal.tenant_id,"purpose":principal.active_purpose},principal.correlation_id)
 
 @app.get("/identity-review")
-def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
+def identity_review_queue(status:str="PENDING",queue_type:Optional[str]=None,resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):
     authorize(principal,"identity:review",{"RESEARCHER","REVIEWER","ADMIN"})
+    normalized_state=resolution_state.upper() if resolution_state else None
+    if normalized_state and normalized_state not in {"PROBABLE_MATCH","POSSIBLE_MATCH","CONFLICT","REQUIRES_REVIEW"}:raise HTTPException(status_code=422,detail="unsupported resolution state")
     with SessionLocal() as s:
-        query=s.query(ReviewQueueItem).filter(ReviewQueueItem.status==status.upper())
+        query=s.query(ReviewQueueItem).join(ResolutionDecision).filter(ReviewQueueItem.status==status.upper(),ReviewQueueItem.priority>=min_priority)
         if queue_type:query=query.filter(ReviewQueueItem.queue_type==queue_type.upper())
+        if normalized_state:query=query.filter(ResolutionDecision.state==normalized_state)
         items=query.order_by(ReviewQueueItem.priority.desc(),ReviewQueueItem.id).limit(limit*5).all();rows=[]
         for item in items:
             packet=build_review_packet(s,item.id,include_excerpt=include_excerpt)
             if "*" in principal.universes or packet["universe"] in principal.universes:rows.append(packet)
             if len(rows)>=limit:break
-        audit_access(s,principal,"IDENTITY_REVIEW_LISTED",{"status":status.upper(),"queue_type":queue_type,"limit":limit,"result_count":len(rows),"include_excerpt":include_excerpt});s.commit();return rows
+        audit_access(s,principal,"IDENTITY_REVIEW_LISTED",{"status":status.upper(),"queue_type":queue_type,"resolution_state":normalized_state,"min_priority":min_priority,"limit":limit,"result_count":len(rows),"include_excerpt":include_excerpt});s.commit();return rows
 
 @app.post("/identity-review/{item_id}/actions")
 def identity_review_action(item_id:int,body:IdentityActionRequest,principal:Principal=Depends(authenticate_private_request)):

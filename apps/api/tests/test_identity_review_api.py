@@ -26,6 +26,9 @@ def test_private_identity_review_is_scoped_evidence_bound_and_maker_checker(monk
         with TestClient(main.app) as client:
             listing=client.get("/identity-review");assert listing.status_code==200 and len(listing.json())==1
             packet=listing.json()[0];assert packet["raw_row_exposed"] is False and "secret" not in str(packet)
+            assert len(client.get("/identity-review",params={"resolution_state":"PROBABLE_MATCH","min_priority":90}).json())==1
+            assert client.get("/identity-review",params={"resolution_state":"EXACT_MATCH"}).status_code==422
+            assert client.get("/identity-review",params={"min_priority":101}).status_code==422
             body={"action":"PROPOSE_MATCH","rationale":"Official evidence supports the proposed identity match","evidence_ids":[wrong_id],"expected_version":packet["version"]}
             assert client.post(f"/identity-review/{item_id}/actions",json=body).status_code==422
             body["evidence_ids"]=[evidence_id];proposal=client.post(f"/identity-review/{item_id}/actions",json=body);assert proposal.status_code==200

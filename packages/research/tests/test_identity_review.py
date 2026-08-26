@@ -18,3 +18,4 @@ def test_review_packet_omits_raw_rows_and_contact_secrets():
         assert packet["universe"]=="venture_capital" and packet["raw_row_exposed"] is False
         assert "secret" not in str(packet) and "text_excerpt" not in packet["evidence"][0]
         assert packet["candidate_identity"]["official_domain"]=="candidate.example"
+        assert packet["adjudication_controls"]=={"distinct_pair":True,"active_cluster_count":0,"exact_pair_proposal_present":False,"can_propose":True,"can_approve":False,"blockers":[]}
