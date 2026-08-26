@@ -1,8 +1,9 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import detect_header, import_csv
-from pmos_research.db import Base, Claim, Contact, CorroborationJob, Entity, ImportBatch, RawImportRow, ResolutionDecision
+from pmos_research.db import Base, Claim, Contact, CorroborationJob, Entity, ImportBatch, RawImportRow, ResolutionDecision, CheckResult, ConflictCase
 from pmos_research.adjudication import run_corroboration_job
+from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.adapters.official_web import OfficialWebAdapter, UnsafeResearchTarget
 from pmos_research.fact_extraction import identity_supported
 import pytest
@@ -45,12 +46,27 @@ def test_import_preserves_every_nonempty_row_and_resolves_exact_duplicates(tmp_p
         batch=db.scalar(select(ImportBatch))
         assert batch.rows_seen==3
         assert db.scalar(select(func.count()).select_from(RawImportRow))==3
-        assert db.scalar(select(func.count()).select_from(Entity))==1
+        assert db.scalar(select(func.count()).select_from(Entity))==2
         assert db.scalar(select(func.count()).select_from(Contact))==1
         assert db.scalar(select(func.count()).select_from(Claim))>=2
         states=set(db.scalars(select(ResolutionDecision.state)))
-        assert "EXACT_MATCH" in states
         assert "REQUIRES_REVIEW" in states
+
+def test_organization_requires_domain_for_exact_match(tmp_path):
+    source=tmp_path/"synthetic.csv";source.write_text("Investor Name,Country,Website\nExample Capital,CA,https://example.test\nExample Capital,CA,https://example.test\n",encoding="utf-8")
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        import_csv(db,source);db.commit()
+        assert db.scalar(select(func.count()).select_from(Entity))==1
+        assert "EXACT_MATCH" in set(db.scalars(select(ResolutionDecision.state)))
+
+def test_same_name_and_jurisdiction_without_domain_is_not_exact(tmp_path):
+    source=tmp_path/"synthetic.csv";source.write_text("Investor Name,Country\nExample Capital,CA\nExample Capital,CA\n",encoding="utf-8")
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        import_csv(db,source);db.commit()
+        assert db.scalar(select(func.count()).select_from(Entity))==2
+        assert "EXACT_MATCH" not in set(db.scalars(select(ResolutionDecision.state)))
 
 def test_import_is_idempotent_by_source_hash(tmp_path):
     source=tmp_path/"synthetic.csv";source.write_text("Name,Email\nAlex Example,alex@example.test\n",encoding="utf-8")
@@ -103,3 +119,40 @@ def test_successful_fetch_does_not_verify_identity_without_name_support():
         assert run_corroboration_job(db,job,GenericPage())=="HUMAN_REVIEW_REQUIRED"
         assert entity.verification_status=="EVIDENCE_COLLECTED"
         assert db.scalar(select(func.count()).select_from(Claim).where(Claim.verification_status=="SUPPORTED"))==0
+
+def test_homepage_match_supports_claim_but_not_whole_entity():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    class OfficialPage:
+        def fetch(self,url):return {"status":"ok","url":url,"title":"Northstar Collection","text":"About Northstar Collection","hash":"b"*64}
+    with factory() as db:
+        entity=Entity(name="Northstar Collection",canonical_name="northstar collection",universe="test",official_url="https://example.test",evidence_confidence=0)
+        db.add(entity);db.flush()
+        job=CorroborationJob(entity_id=entity.id,source_url=entity.official_url,source_domain="example.test",checkpoint_json="{}")
+        db.add(job);db.flush()
+        assert run_corroboration_job(db,job,OfficialPage())=="SUPPORTED"
+        assert entity.verification_status=="EVIDENCE_COLLECTED"
+        assert db.scalar(select(func.count()).select_from(Claim).where(Claim.verification_status=="SUPPORTED"))==1
+
+def test_diligence_case_has_type_specific_mandatory_checks():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example CVC",canonical_name="example cvc",universe="test")
+        db.add(entity);db.flush()
+        case=open_case(db,entity.id,"corporate venture capital","counterparty assessment","internal decision support","maker",["US"])
+        checks=set(db.scalars(select(CheckResult.check_code).where(CheckResult.case_id==case.id)))
+        assert {"legal_identity","ownership_control","mandate","authority_to_transact"} <= checks
+        assert readiness(db,case.id)["state"]=="RED"
+
+def test_material_conflict_blocks_readiness_and_high_risk_requires_maker_checker():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Example Fund",canonical_name="example fund",universe="test")
+        db.add(entity);db.flush()
+        case=open_case(db,entity.id,"private equity","assessment","internal decision support","maker")
+        case.risk_tier="HIGH"
+        for check in db.scalars(select(CheckResult).where(CheckResult.case_id==case.id)):
+            check.status="CORROBORATED"
+        db.add(ConflictCase(entity_id=entity.id,predicate="fund_manager",materiality="MATERIAL"));db.flush()
+        assert readiness(db,case.id)=={"state":"RED","missing_checks":[],"material_conflicts":["fund_manager"]}
+        with pytest.raises(ValueError):specialist_signoff(db,case.id,"maker","reviewer","APPROVE","looks good")
+        specialist_signoff(db,case.id,"independent-reviewer","reviewer","ESCALATE","manager conflict remains")

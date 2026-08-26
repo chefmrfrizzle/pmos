@@ -77,7 +77,9 @@ def run_corroboration_job(session,job:CorroborationJob,adapter)->str:
         if supported:
             existing=session.scalar(select(Claim).where(Claim.entity_id==entity.id,Claim.field=="official_identity",Claim.value==entity.name,Claim.source_url==source_url,Claim.evidence_hash==content_hash))
             if not existing:session.add(Claim(entity_id=entity.id,field="official_identity",value=entity.name,source_url=source_url,source_type="official",confidence=.9,verification_status="SUPPORTED",extractor="deterministic_identity_v1",evidence_hash=content_hash))
-            job.status="SUPPORTED";entity.verification_status="SUPPORTED";entity.evidence_confidence=max(entity.evidence_confidence,90)
+            # This supports only the official-identity claim. Entity-level status is
+            # a field-coverage roll-up and must never be promoted by one homepage hit.
+            job.status="SUPPORTED";entity.verification_status="EVIDENCE_COLLECTED";entity.evidence_confidence=max(entity.evidence_confidence,35)
         else:
             job.status="HUMAN_REVIEW_REQUIRED";entity.verification_status="EVIDENCE_COLLECTED";entity.evidence_confidence=max(entity.evidence_confidence,35)
         job.checkpoint_json=json.dumps({"source_url":source_url,"evidence_hash":content_hash,"identity_supported":supported},sort_keys=True)

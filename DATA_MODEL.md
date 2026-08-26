@@ -5,3 +5,9 @@ Core nodes include people, organizations, funds, families, offices, allocators, 
 Resolution states are `EXACT_MATCH`, `PROBABLE_MATCH`, `POSSIBLE_MATCH`, `CONFLICT`, and `REQUIRES_REVIEW`; only exact matches are safe to auto-link.
 
 Private imports use `ImportBatch`, `RawImportRow`, and `ResolutionDecision`. Every non-empty physical row retains its original values, normalized mapping, source coordinates, hash, import time, and disposition. Import-derived claims stay `CANDIDATE`; they are private-source evidence, not public verification, and never enter the deployed demo.
+
+Institutional diligence adds `DiligenceCase`, mandatory `CheckResult` records, `SourceDocument` snapshots, exact `EvidencePassage` records, claim-to-passage links, `ConflictCase` members, `ReviewSignoff`, and case audit events. Legal identifiers and jurisdiction profiles are stored separately from display names.
+
+`IdentityCluster` and `IdentityMembership` represent proposed, accepted, or rejected canonicalization without deleting source entities. `EntityAlias` retains sourced names. Institutional structures distinguish legal entities and vehicles and preserve metric type, currency, basis, and date rather than collapsing AUM, AUA, NAV, commitments, target close, and final close.
+
+An entity-level verification label is a coverage roll-up. Only assertion-level evidence can be supported or corroborated, and only a scoped human review can become specialist-verified. A single official webpage never verifies an entire entity.

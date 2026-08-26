@@ -42,8 +42,8 @@ def _source(path:Path,row_hash:str)->str:return f"private-import://{path.name}/{
 def _candidate_entity(session,name,country,url):
     candidates=session.scalars(select(Entity).where(Entity.canonical_name==canonicalize_name(name)).limit(20)).all()
     incoming_domain=urlparse(url).netloc.lower().removeprefix("www.")
-    exact=[x for x in candidates if country and x.country and x.country.casefold()==country.casefold() and not (incoming_domain and x.official_url and urlparse(x.official_url).netloc.lower().removeprefix("www.")!=incoming_domain)]
-    if len(exact)==1:return exact[0],MatchState.EXACT,.97,("same normalized name","same jurisdiction")
+    exact=[x for x in candidates if country and x.country and x.country.casefold()==country.casefold() and incoming_domain and x.official_url and urlparse(x.official_url).netloc.lower().removeprefix("www.")==incoming_domain]
+    if len(exact)==1:return exact[0],MatchState.EXACT,.98,("same normalized name","same jurisdiction","same official domain")
     if len(candidates)==1:
         result=resolve({"name":name,"url":url},{"name":candidates[0].name,"url":candidates[0].official_url})
         return candidates[0],result.state,result.confidence,result.reasons

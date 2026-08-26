@@ -100,7 +100,9 @@ make dev
 Open:
 
 - Web UI: http://localhost:3000
-- API docs: http://localhost:8000/docs
+- API health: http://localhost:8000/health
+
+Private entity routes are disabled by default and loopback-only in local development. They require `PMOS_ENABLE_PRIVATE_API=1` and a random `PMOS_DEV_API_TOKEN` of at least 24 characters. This development gate is not production authentication; browser-based private functionality requires OIDC/MFA, server-enforced roles, object-level authorization, and immutable audit logging first.
 
 ### Import your private databases
 
@@ -112,7 +114,7 @@ unzip PMOS-private-seed.zip -d ~/PMOS-private
   --input-dir ~/PMOS-private/data/private/imports
 ```
 
-Imported records go to the local SQLite database at `data/private/pmos.db` and remain gitignored.
+Imported records go to the configured `PMOS_PRIVATE_ROOT` (by default `~/.local/share/pmos`) outside the public repository.
 
 ---
 

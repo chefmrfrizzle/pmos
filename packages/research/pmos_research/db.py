@@ -182,6 +182,187 @@ class CorroborationJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("entity_id", "source_url", name="uq_corroboration_target"),)
 
+class DiligenceCase(Base):
+    __tablename__ = "diligence_cases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    purpose: Mapped[str] = mapped_column(Text)
+    permitted_use: Mapped[str] = mapped_column(Text)
+    jurisdiction_scope_json: Mapped[str] = mapped_column(Text, default="[]")
+    scope_exclusions_json: Mapped[str] = mapped_column(Text, default="[]")
+    risk_tier: Mapped[str] = mapped_column(String(30), default="STANDARD", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="INTAKE", index=True)
+    owner: Mapped[str] = mapped_column(String(150))
+    reviewer: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    decision: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class SourceDocument(Base):
+    __tablename__ = "source_documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), nullable=True, index=True)
+    publisher: Mapped[str] = mapped_column(String(300), index=True)
+    publisher_independence_group: Mapped[str] = mapped_column(String(300), index=True)
+    source_rank: Mapped[str] = mapped_column(String(10), index=True)
+    source_type: Mapped[str] = mapped_column(String(80), index=True)
+    source_url: Mapped[str] = mapped_column(Text)
+    document_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    jurisdiction: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("source_url", "content_hash", name="uq_source_document_snapshot"),)
+
+class EvidencePassage(Base):
+    __tablename__ = "evidence_passages"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("source_documents.id"), index=True)
+    page: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    section: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    start_offset: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    end_offset: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    passage: Mapped[str] = mapped_column(Text)
+    passage_hash: Mapped[str] = mapped_column(String(64), index=True)
+    __table_args__ = (UniqueConstraint("document_id", "passage_hash", name="uq_document_passage"),)
+
+class ClaimEvidence(Base):
+    __tablename__ = "claim_evidence"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), index=True)
+    passage_id: Mapped[int] = mapped_column(ForeignKey("evidence_passages.id"), index=True)
+    directness: Mapped[float] = mapped_column(Float)
+    supports: Mapped[bool] = mapped_column(Boolean, default=True)
+    __table_args__ = (UniqueConstraint("claim_id", "passage_id", name="uq_claim_passage"),)
+
+class CheckResult(Base):
+    __tablename__ = "diligence_check_results"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("diligence_cases.id"), index=True)
+    check_code: Mapped[str] = mapped_column(String(100), index=True)
+    fact_class: Mapped[str] = mapped_column(String(80), index=True)
+    mandatory: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(40), default="NOT_STARTED", index=True)
+    result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    exception_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    evidence_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint("case_id", "check_code", name="uq_case_check"),)
+
+class ReviewSignoff(Base):
+    __tablename__ = "review_signoffs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("diligence_cases.id"), index=True)
+    reviewer: Mapped[str] = mapped_column(String(150))
+    role: Mapped[str] = mapped_column(String(80))
+    decision: Mapped[str] = mapped_column(String(40))
+    rationale: Mapped[str] = mapped_column(Text)
+    scope_json: Mapped[str] = mapped_column(Text, default="[]")
+    signed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class ConflictCase(Base):
+    __tablename__ = "conflict_cases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    predicate: Mapped[str] = mapped_column(String(120), index=True)
+    effective_period: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    materiality: Mapped[str] = mapped_column(String(20), default="MATERIAL", index=True)
+    status: Mapped[str] = mapped_column(String(40), default="HUMAN_REVIEW_REQUIRED", index=True)
+    selected_claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
+    reviewer: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class ConflictMember(Base):
+    __tablename__ = "conflict_members"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conflict_id: Mapped[int] = mapped_column(ForeignKey("conflict_cases.id"), index=True)
+    claim_id: Mapped[int] = mapped_column(ForeignKey("claims.id"), index=True)
+    __table_args__ = (UniqueConstraint("conflict_id", "claim_id", name="uq_conflict_claim"),)
+
+class LegalIdentifier(Base):
+    __tablename__ = "legal_identifiers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    identifier_type: Mapped[str] = mapped_column(String(50), index=True)
+    identifier_value: Mapped[str] = mapped_column(String(250), index=True)
+    jurisdiction: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="CANDIDATE", index=True)
+    claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
+    __table_args__ = (UniqueConstraint("identifier_type", "identifier_value", "jurisdiction", name="uq_legal_identifier"),)
+
+class JurisdictionProfile(Base):
+    __tablename__ = "jurisdiction_profiles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    jurisdiction: Mapped[str] = mapped_column(String(10), index=True)
+    legal_form: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    formation_status: Mapped[str] = mapped_column(String(40), default="UNASSESSED")
+    regulatory_status: Mapped[str] = mapped_column(String(40), default="UNASSESSED")
+    disclosure_limitations: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    as_of: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = (UniqueConstraint("entity_id", "jurisdiction", name="uq_entity_jurisdiction"),)
+
+class InstitutionalStructure(Base):
+    __tablename__ = "institutional_structures"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    structure_type: Mapped[str] = mapped_column(String(60), index=True)
+    strategy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    domicile: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    legal_form: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    vintage: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    metric_type: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    metric_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    metric_currency: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    metric_as_of: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), default="CANDIDATE")
+    claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
+
+class CaseAuditEvent(Base):
+    __tablename__ = "case_audit_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("diligence_cases.id"), index=True)
+    actor: Mapped[str] = mapped_column(String(150))
+    action: Mapped[str] = mapped_column(String(80), index=True)
+    prior_state_json: Mapped[str] = mapped_column(Text, default="{}")
+    resulting_state_json: Mapped[str] = mapped_column(Text, default="{}")
+    rationale: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class IdentityCluster(Base):
+    __tablename__ = "identity_clusters"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    identity_type: Mapped[str] = mapped_column(String(40), index=True)
+    canonical_label: Mapped[str] = mapped_column(String(300), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PROPOSED", index=True)
+    created_by: Mapped[str] = mapped_column(String(150))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class IdentityMembership(Base):
+    __tablename__ = "identity_memberships"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cluster_id: Mapped[int] = mapped_column(ForeignKey("identity_clusters.id"), index=True)
+    entity_id: Mapped[Optional[int]] = mapped_column(ForeignKey("entities.id"), nullable=True, index=True)
+    contact_id: Mapped[Optional[int]] = mapped_column(ForeignKey("contacts.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PROPOSED", index=True)
+    match_basis_json: Mapped[str] = mapped_column(Text, default="[]")
+    confidence: Mapped[float] = mapped_column(Float)
+    decided_by: Mapped[Optional[str]] = mapped_column(String(150), nullable=True)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class EntityAlias(Base):
+    __tablename__ = "entity_aliases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entity_id: Mapped[int] = mapped_column(ForeignKey("entities.id"), index=True)
+    alias: Mapped[str] = mapped_column(String(300), index=True)
+    alias_type: Mapped[str] = mapped_column(String(40), default="OTHER")
+    status: Mapped[str] = mapped_column(String(30), default="CANDIDATE")
+    claim_id: Mapped[Optional[int]] = mapped_column(ForeignKey("claims.id"), nullable=True)
+    __table_args__ = (UniqueConstraint("entity_id", "alias", "alias_type", name="uq_entity_alias"),)
+
 def init_db() -> None:
     PRIVATE_ROOT.mkdir(parents=True,exist_ok=True)
     Base.metadata.create_all(engine)
