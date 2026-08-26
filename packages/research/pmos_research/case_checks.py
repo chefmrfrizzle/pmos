@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
 from .db import Claim,ClaimEvidence,CheckResult,ConflictCase,DiligenceCase,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,EvidencePassage,SourceDocument
+from .publisher_independence import evaluate_document_independence
 
 class CheckAdjudicationError(ValueError):pass
 QUALIFYING_STATUSES={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
@@ -34,11 +35,11 @@ def evidence_sufficiency(session,check_id:int)->dict:
     claims=session.scalars(select(Claim).join(DiligenceCheckEvidence,DiligenceCheckEvidence.claim_id==Claim.id).where(DiligenceCheckEvidence.check_id==check.id)).all()
     claim_ids=[x.id for x in claims if x.verification_status in QUALIFYING_STATUSES]
     documents=session.scalars(select(SourceDocument).join(EvidencePassage,EvidencePassage.document_id==SourceDocument.id).join(ClaimEvidence,ClaimEvidence.passage_id==EvidencePassage.id).where(ClaimEvidence.claim_id.in_(claim_ids))).unique().all() if claim_ids else []
-    ranks={x.source_rank for x in documents};independence={x.publisher_independence_group for x in documents if x.source_rank in {"S0","S1","S2","S3"}}
+    source_controls=evaluate_document_independence(session,documents);ranks=set(source_controls["source_ranks"]);independence=set(source_controls["approved_independence_groups"])
     dispositive="S0" in ranks;corroborated=len(independence)>=2 and bool(ranks & {"S1","S2"})
     status_ok=bool(claim_ids);sufficient=status_ok and (dispositive or corroborated)
     conflicts=session.scalars(select(ConflictCase).where(ConflictCase.entity_id==case.entity_id,ConflictCase.predicate==check.fact_class,ConflictCase.status!="RESOLVED")).all()
-    return {"sufficient":sufficient and not conflicts,"qualifying_claim_ids":sorted(claim_ids),"source_ranks":sorted(ranks),"independence_groups":sorted(independence),"unresolved_conflict_ids":sorted(x.id for x in conflicts)}
+    return {"sufficient":sufficient and not conflicts,"qualifying_claim_ids":sorted(claim_ids),"source_ranks":sorted(ranks),"independence_groups":sorted(independence),"unreviewed_publisher_count":source_controls["unreviewed_publisher_count"],"duplicate_content_count":source_controls["duplicate_content_count"],"source_factors":source_controls["factors"],"unresolved_conflict_ids":sorted(x.id for x in conflicts)}
 
 def adjudicate_check(session,check_id:int,action:str,reviewer:str,rationale:str,expected_status:str|None=None):
     check,case=_check_case(session,check_id)

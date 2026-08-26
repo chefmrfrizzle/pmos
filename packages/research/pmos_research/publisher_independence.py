@@ -62,6 +62,19 @@ def approved_independence_group(session,document:SourceDocument)->str|None:
     assessment=session.scalar(select(PublisherIndependenceAssessment).where(PublisherIndependenceAssessment.source_domain==domain,PublisherIndependenceAssessment.independence_group==document.publisher_independence_group.casefold(),PublisherIndependenceAssessment.status=="APPROVED"))
     return assessment.independence_group if assessment else None
 
+def evaluate_document_independence(session,documents,qualifying_ranks=frozenset({"S0","S1","S2","S3"}))->dict:
+    seen=set();ranks=set();groups=set();duplicate=0;unreviewed=0;factors=[]
+    for document in sorted(documents,key=lambda x:x.id):
+        duplicate_content=document.content_hash in seen
+        if duplicate_content:duplicate+=1
+        else:seen.add(document.content_hash);ranks.add(document.source_rank)
+        group=approved_independence_group(session,document) if document.source_rank in qualifying_ranks else None
+        if not duplicate_content and document.source_rank in qualifying_ranks:
+            if group:groups.add(group)
+            elif document.source_rank!="S0":unreviewed+=1
+        factors.append({"source_document_id":document.id,"source_rank":document.source_rank,"content_hash":document.content_hash,"duplicate_content":duplicate_content,"declared_independence_group":document.publisher_independence_group,"approved_independence_group":group})
+    return {"source_ranks":sorted(ranks),"approved_independence_groups":sorted(groups),"approved_independence_group_count":len(groups),"unreviewed_publisher_count":unreviewed,"duplicate_content_count":duplicate,"factors":factors}
+
 def build_publisher_independence_packet(session,assessment_id:int)->dict:
     assessment=session.get(PublisherIndependenceAssessment,assessment_id)
     if not assessment:raise PublisherIndependenceError("unknown publisher independence assessment")

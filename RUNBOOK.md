@@ -36,6 +36,8 @@ For a proposed assertion, use `evidence_controls.corroboration_gaps` as a bounde
 
 Before counting two publishers, propose the observed domain and its ultimate publisher-control group at authenticated `POST /publisher-independence` with exact ownership/control evidence. Review pending work at `GET /publisher-independence`; a different `REVIEWER` or `ADMIN` with `evidence:approve` must approve the unchanged package. Until approval, relationship packets show `PUBLISHER_INDEPENDENCE_REVIEW_REQUIRED`. Never infer independence from different hostnames, brands, or mastheads alone.
 
+Diligence-check sufficiency and two-source private-sale gate packets expose `unreviewed_publisher_count`, `duplicate_content_count`, approved `independence_groups`, and per-document source factors. Clear publisher governance before proposing completion or pass; do not use an exception merely to avoid a missing independence assessment.
+
 Inspect unmatched named objects through authenticated `GET /relationship-mentions`. `LINK_TARGET` requires a distinct existing entity and authorization over both universes; otherwise reject or defer. Never create a new institution merely to clear this queue. Confirm legal identity through the identity workflow first, then link the mention and continue through relationship-candidate review.
 
 Private control and ledger scripts select their datastore only through `PMOS_DB_URL`; they reject unsupported command-line arguments. Set the absolute external SQLite URL in the command environment and confirm the reported populations are consistent with the intended datastore before relying on the result.

@@ -454,7 +454,7 @@ def test_possible_identifier_candidate_cannot_be_proposed():
 
 def _ranked_claim(db,entity,field,status,rank,group,index):
     document=SourceDocument(entity_id=entity.id,publisher=group,publisher_independence_group=group,source_rank=rank,source_type="test",source_url=f"https://{group}/{index}",content_hash=f"{index:064x}"[-64:]);db.add(document);db.flush()
-    passage=EvidencePassage(document_id=document.id,section="record",passage=f"{field} evidence",passage_hash=f"{index+100:064x}"[-64:]);db.add(passage);db.flush()
+    text=f"{field} evidence";passage=EvidencePassage(document_id=document.id,section="record",passage=text,passage_hash=hashlib.sha256(text.encode()).hexdigest());db.add(passage);db.flush()
     claim=Claim(entity_id=entity.id,field=field,value="supported value",source_url=document.source_url,source_type="test",confidence=.95,verification_status=status,extractor="test",evidence_hash=document.content_hash);db.add(claim);db.flush();db.add(ClaimEvidence(claim_id=claim.id,passage_id=passage.id,directness=.95,supports=True));db.flush();return claim
 
 def test_diligence_check_requires_independent_sources_and_maker_checker():
@@ -465,6 +465,7 @@ def test_diligence_check_requires_independent_sources_and_maker_checker():
         official=_ranked_claim(db,entity,"official_identity","SUPPORTED","S1","official.example",1)
         lei=_ranked_claim(db,entity,"lei","SPECIALIST_VERIFIED","S2","gleif.org",2)
         submit_check_evidence(db,check.id,[official.id,lei.id],"researcher","identity sources attached")
+        passages=[db.get(EvidencePassage,db.scalar(select(ClaimEvidence.passage_id).where(ClaimEvidence.claim_id==claim.id))) for claim in (official,lei)];assert not evidence_sufficiency(db,check.id)["sufficient"] and evidence_sufficiency(db,check.id)["unreviewed_publisher_count"]==2;_approve_publisher_groups(db,passages)
         assert evidence_sufficiency(db,check.id)["sufficient"]
         adjudicate_check(db,check.id,"PROPOSE_COMPLETE","maker","independent sources satisfy identity procedure","EVIDENCE_COLLECTED")
         with pytest.raises(CheckAdjudicationError):adjudicate_check(db,check.id,"APPROVE","maker","self approval","REVIEW_PROPOSED")

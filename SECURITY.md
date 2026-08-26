@@ -24,6 +24,8 @@ Publisher labels alone do not prove corroboration. Relationship evidence must na
 
 Publisher independence is private governed metadata. Proposal and approval require scoped evidence permissions, exact hash-bound passages, substantive rationale, and different actors. A source domain may have only one approved control group; unreviewed free-text groups do not satisfy relationship corroboration.
 
+Institutional checks and provenance, attribution, restitution, and cultural-property gates use the same approved publisher-control registry and content-deduplication policy. This prevents policy drift between the counterparty graph and transaction-readiness decisions.
+
 The legacy broad CSV export is disabled. Private exports are limited to one diligence dossier in JSON, require exact permitted-purpose matching, a recent passing assurance run, independent approval, a different executor, and an unexpired single-use request. Execution resolves beneath `PMOS_PRIVATE_ROOT`, rejects repository and symlink escape, verifies encrypted storage, uses owner-only permissions, rehashes the artifact, emits a classified manifest, and records request/approval/execution events plus ledger anchors. No browser download route exists. Encrypted delivery and recipient verification remain separate operational requirements before distribution.
 
 ## Remaining assurance gates

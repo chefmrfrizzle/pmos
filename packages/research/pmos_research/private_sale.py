@@ -6,6 +6,7 @@ from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
 from .db import Claim,ClaimEvidence,Entity,EvidencePassage,PrivateSaleCase,PrivateSaleGate,PrivateSaleGateEvent,PrivateSaleGateEvidence,SourceDocument
+from .publisher_independence import evaluate_document_independence
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 GATES=(
@@ -61,12 +62,12 @@ def gate_sufficiency(session,gate_id:int)->dict:
         observed=_utc(claim.last_seen or claim.retrieved_at or claim.observed_at);stale+=max(0,(now-observed).days)>FRESHNESS[gate.gate_code]
         for _,passage,document in _claim_documents(session,claim):
             if hashlib.sha256(passage.passage.encode()).hexdigest()==passage.passage_hash and claim.evidence_hash==document.content_hash:documents.append(document);package_parts.append(f"{claim.id}:{claim.value}:{document.id}:{document.content_hash}:{passage.id}:{passage.passage_hash}")
-    ranks={x.source_rank for x in documents};groups={x.publisher_independence_group for x in documents if x.source_rank in {"S0","S1","S2"}}
+    source_controls=evaluate_document_independence(session,documents,frozenset({"S0","S1","S2"}));ranks=set(source_controls["source_ranks"]);groups=set(source_controls["approved_independence_groups"])
     values={" ".join(x.value.casefold().split()) for x in claims}
     if gate.gate_code in S0_ONLY:sufficient="S0" in ranks
     elif gate.gate_code in TWO_SOURCE:sufficient="S0" in ranks or (len(groups)>=2 and bool(ranks & {"S1","S2"}))
     else:sufficient=bool(ranks & {"S0","S1","S2"})
-    return {"sufficient":bool(claims) and len(values)==1 and stale==0 and sufficient,"claim_count":len(claims),"distinct_value_count":len(values),"source_ranks":sorted(ranks),"independence_group_count":len(groups),"stale_claim_count":stale,"freshness_threshold_days":FRESHNESS[gate.gate_code],"evidence_package_hash":hashlib.sha256("|".join(sorted(package_parts)).encode()).hexdigest()}
+    return {"sufficient":bool(claims) and len(values)==1 and stale==0 and sufficient,"claim_count":len(claims),"distinct_value_count":len(values),"source_ranks":sorted(ranks),"independence_groups":sorted(groups),"independence_group_count":len(groups),"unreviewed_publisher_count":source_controls["unreviewed_publisher_count"],"duplicate_content_count":source_controls["duplicate_content_count"],"source_factors":source_controls["factors"],"stale_claim_count":stale,"freshness_threshold_days":FRESHNESS[gate.gate_code],"evidence_package_hash":hashlib.sha256("|".join(sorted(package_parts)).encode()).hexdigest()}
 
 def adjudicate_gate(session,gate_id:int,action:str,actor:str,actor_role:str,rationale:str,expected_status:str|None=None)->PrivateSaleGate:
     gate=session.get(PrivateSaleGate,gate_id)

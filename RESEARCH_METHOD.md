@@ -22,6 +22,8 @@ Relationship corroboration counts only evidence that names both registered count
 
 Source-domain difference is not publisher independence. PMOS initially treats `publisher_independence_group` as an untrusted declaration. A proposed domain-to-control-group mapping requires exact evidence and independent maker/checker approval; only approved mappings contribute to a two-publisher relationship threshold. Conflicting approved control groups for one domain fail closed.
 
+The same approved-group calculation governs relationship assertions, institutional diligence checks, and two-source private-sale gates. Exact duplicate document hashes contribute once across all three workflows, preventing a syndicated record from satisfying corroboration through multiple URLs or brands.
+
 When a controlled relationship phrase is followed by a bounded capitalized name that does not match the registered universe, PMOS stores an unresolved mention and one-way normalized mention hash. It does not create an entity or target edge. A scoped human may link the mention only to an already registered distinct entity, producing a new review-required relationship candidate while preserving the original passage and mention.
 
 GLEIF is treated as S2 recognized market infrastructure. Search results create `RegistryIdentifierCandidate` records and structured evidence passages; result order never determines identity. Deterministic comparison produces `PROBABLE_MATCH`, `POSSIBLE_MATCH`, `CONFLICT`, or `REQUIRES_REVIEW`. No candidate populates `LegalIdentifier` automatically. Acceptance requires a probable registry match, separately supported official identity evidence, maker-checker approval, and a new specialist-verified claim while preserving the candidate claim.
