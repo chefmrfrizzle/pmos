@@ -33,3 +33,8 @@ def test_pending_mention_batch_preparation_emits_aggregate_only_counts():
     engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:
         _mention(db);result=freeze_pending_mention_batches(db);assert result["batch_count"]==1 and result["item_count"]==1 and result["universe_count"]==1 and set(result)=={"classification","status","universe_count","batch_count","item_count","batches"}
+
+def test_mention_freeze_prevents_same_state_overlap_and_allows_next_state_batch():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        mention=_mention(db);first=freeze_mention_review_batch(db,"admin","venture_capital");assert freeze_mention_review_batch(db,"admin","venture_capital").id==first.id;mention.status="TARGET_PROPOSED";db.flush();second=freeze_mention_review_batch(db,"admin","venture_capital","TARGET_PROPOSED");assert second.id!=first.id and second.item_count==1

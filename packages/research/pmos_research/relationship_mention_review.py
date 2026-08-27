@@ -25,9 +25,16 @@ def freeze_mention_review_batch(session,actor:str,universe:str,status:str="ENTIT
     for mention in session.scalars(select(RelationshipMentionCandidate).where(RelationshipMentionCandidate.status==status).order_by(RelationshipMentionCandidate.id)):
         source=session.get(Entity,mention.from_entity_id)
         if not source or source.universe!=universe:continue
-        rows.append({"mention_candidate_id":mention.id,"item_status":mention.status,"identity_fingerprint":mention_review_fingerprint(session,mention)})
+        fingerprint=mention_review_fingerprint(session,mention);active=session.scalars(select(RelationshipMentionReviewBatchItem).join(RelationshipMentionReviewBatch,RelationshipMentionReviewBatch.id==RelationshipMentionReviewBatchItem.batch_id).where(RelationshipMentionReviewBatch.status=="FROZEN",RelationshipMentionReviewBatchItem.mention_candidate_id==mention.id,RelationshipMentionReviewBatchItem.item_status==status)).all()
+        if any(secrets.compare_digest(item.identity_fingerprint,fingerprint) for item in active):continue
+        rows.append({"mention_candidate_id":mention.id,"item_status":mention.status,"identity_fingerprint":fingerprint})
         if len(rows)>=limit:break
-    criteria={"universe":universe,"status":status,"limit":limit};manifest={"criteria":criteria,"items":rows};digest=hashlib.sha256(_canonical(manifest).encode()).hexdigest();existing=session.scalar(select(RelationshipMentionReviewBatch).where(RelationshipMentionReviewBatch.manifest_hash==digest))
+    criteria={"universe":universe,"status":status,"limit":limit}
+    if not rows:
+        existing=session.scalar(select(RelationshipMentionReviewBatch).where(RelationshipMentionReviewBatch.status=="FROZEN",RelationshipMentionReviewBatch.criteria_json==_canonical(criteria)).order_by(RelationshipMentionReviewBatch.id.desc()))
+        if existing:return existing
+        raise RelationshipMentionReviewError("no unbatched mention candidates match the review criteria")
+    manifest={"criteria":criteria,"items":rows};digest=hashlib.sha256(_canonical(manifest).encode()).hexdigest();existing=session.scalar(select(RelationshipMentionReviewBatch).where(RelationshipMentionReviewBatch.manifest_hash==digest))
     if existing:return existing
     batch=RelationshipMentionReviewBatch(criteria_json=_canonical(criteria),manifest_hash=digest,item_count=len(rows),created_by=actor.strip());session.add(batch);session.flush()
     for row in rows:session.add(RelationshipMentionReviewBatchItem(batch_id=batch.id,**row))

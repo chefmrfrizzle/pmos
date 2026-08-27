@@ -46,6 +46,8 @@ Diligence-check sufficiency and two-source private-sale gate packets expose `unr
 
 Inspect unmatched named objects through authenticated `GET /relationship-mentions`. Never create a new institution merely to clear this queue. Confirm legal identity through the identity workflow first, then propose the existing target and continue through relationship-candidate review only after independent approval.
 
+Mention freezing excludes candidates already present in an active batch for the same workflow state. A state transition may enter a new batch because the identity fingerprint and authorized action have changed; unchanged mentions cannot receive overlapping active review authority.
+
 Use `PROPOSE_TARGET`—not direct linkage—with a distinct registered target and `identity:write`. The mention becomes `TARGET_PROPOSED` without creating a candidate. A different `REVIEWER` or `ADMIN` with `identity:approve` must use `APPROVE_TARGET` against the unchanged identity package; `REJECT_TARGET` preserves the rejected version and returns the mention to `ENTITY_RESOLUTION_REQUIRED`. Legacy `LINK_TARGET` is not accepted.
 
 First freeze `ENTITY_RESOLUTION_REQUIRED` work with `POST /relationship-mentions/batches`, then have an `ADMIN` assign a named `RESEARCHER` through the batch assignment route. Include that batch ID with `PROPOSE_TARGET`. Freeze a new `TARGET_PROPOSED` batch, assign a different `REVIEWER`, and include the new batch ID with `APPROVE_TARGET` or `REJECT_TARGET`. Assignments expire after the configured bounded period and may be revoked; close superseded batches instead of reusing stale manifests.
