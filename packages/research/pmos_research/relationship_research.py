@@ -109,13 +109,21 @@ def build_relationship_candidate_packet(session,candidate_id:int)->dict:
     if not source or not target or not passage or not document or document.entity_id!=source.id:raise RelationshipResearchError("relationship candidate evidence chain is incomplete")
     return {"classification":"PRIVATE—AUTHORIZED RELATIONSHIP CANDIDATE REVIEW","id":candidate.id,"status":candidate.status,"suggested_relation_type":candidate.suggested_relation_type,"confidence":candidate.confidence,"rule_version":candidate.rule_version,"reasons":json.loads(candidate.reasons_json),"source_entity":{"id":source.id,"name":source.name,"universe":source.universe},"target_entity":{"id":target.id,"name":target.name,"universe":target.universe},"evidence":{"passage_id":passage.id,"passage":passage.passage,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"source_url":document.source_url,"source_rank":document.source_rank},"resulting_assertion_id":candidate.resulting_assertion_id}
 
-def adjudicate_relationship_candidate(session,candidate_id:int,action:str,actor:str,rationale:str,expected_status:str):
+def adjudicate_relationship_candidate(session,candidate_id:int,action:str,actor:str,rationale:str,expected_status:str,review_batch_id:int|None=None,reviewer_role:str="RESEARCHER"):
     candidate=session.get(RelationshipResearchCandidate,candidate_id)
     if not candidate or candidate.status!=expected_status:raise RelationshipResearchError("candidate changed; reload before deciding")
-    if len(rationale.strip())<10:raise RelationshipResearchError("substantive rationale is required")
+    if len(rationale.strip())<10 or not review_batch_id:raise RelationshipResearchError("substantive rationale and review_batch_id are required")
+    from .db import EvidenceReviewBatchItem,RelationshipCandidateDecisionAuthorization,ResearchPassageCandidate
+    from .evidence_review_assignment import EvidenceReviewAssignmentError,require_assignment
+    from .evidence_review_batch import build_batch_packet
+    batch_item=session.scalar(select(EvidenceReviewBatchItem).join(ResearchPassageCandidate,ResearchPassageCandidate.id==EvidenceReviewBatchItem.passage_candidate_id).where(EvidenceReviewBatchItem.batch_id==review_batch_id,ResearchPassageCandidate.evidence_passage_id==candidate.evidence_passage_id,EvidenceReviewBatchItem.candidate_status=="HUMAN_REVIEW_REQUIRED"))
+    packet=build_batch_packet(session,review_batch_id) if batch_item else None
+    if not batch_item or not packet or packet["status"]!="FROZEN" or not packet["manifest_valid"]:raise RelationshipResearchError("candidate requires its exact passage in a valid frozen evidence batch")
+    try:assignment=require_assignment(session,review_batch_id,actor,reviewer_role)
+    except EvidenceReviewAssignmentError as exc:raise RelationshipResearchError(str(exc)) from exc
     action=action.upper();prior=candidate.status
     if prior!="HUMAN_REVIEW_REQUIRED" or action not in {"PROPOSE_ASSERTION","REJECT","DEFER"}:raise RelationshipResearchError("unsupported relationship candidate transition")
     if action=="PROPOSE_ASSERTION":
         assertion=propose_relationship(session,candidate.from_entity_id,candidate.to_entity_id,candidate.suggested_relation_type,actor,[candidate.evidence_passage_id]);candidate.resulting_assertion_id=assertion.id;result="ASSERTION_PROPOSED"
     else:result="REJECTED" if action=="REJECT" else "DEFERRED"
-    candidate.status=result;session.add(RelationshipResearchCandidateEvent(candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,actor=actor,rationale=rationale.strip()));append_ledger_event(session,"RELATIONSHIP_RESEARCH_CANDIDATE",candidate.id,actor,"RESEARCHER",action,{"resulting_state":result,"resulting_assertion_id":candidate.resulting_assertion_id});session.flush();return candidate
+    candidate.status=result;event=RelationshipResearchCandidateEvent(candidate_id=candidate.id,action=action,prior_state=prior,resulting_state=result,actor=actor,rationale=rationale.strip());session.add(event);session.flush();session.add(RelationshipCandidateDecisionAuthorization(candidate_event_id=event.id,batch_item_id=batch_item.id,assignment_id=assignment.id));append_ledger_event(session,"RELATIONSHIP_RESEARCH_CANDIDATE",candidate.id,actor,"RESEARCHER",action,{"resulting_state":result,"resulting_assertion_id":candidate.resulting_assertion_id,"review_batch_id":review_batch_id,"assignment_id":assignment.id,"batch_item_id":batch_item.id});session.flush();return candidate

@@ -915,6 +915,14 @@ class RelationshipResearchCandidateEvent(Base):
     rationale: Mapped[str] = mapped_column(Text)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class RelationshipCandidateDecisionAuthorization(Base):
+    __tablename__ = "relationship_candidate_decision_authorizations"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    candidate_event_id: Mapped[int] = mapped_column(ForeignKey("relationship_research_candidate_events.id"), unique=True, index=True)
+    batch_item_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_batch_items.id"), index=True)
+    assignment_id: Mapped[int] = mapped_column(ForeignKey("evidence_review_assignments.id"), index=True)
+    authorized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class RelationshipMentionCandidate(Base):
     __tablename__ = "relationship_mention_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)

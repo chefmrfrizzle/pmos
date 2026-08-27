@@ -89,6 +89,7 @@ class RelationshipCandidateActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=30)
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=5,max_length=40)
+    review_batch_id:int=Field(gt=0)
 
 class RelationshipMentionActionRequest(BaseModel):
     action:str=Field(min_length=5,max_length=20)
@@ -517,9 +518,10 @@ def relationship_mention_action(mention_id:int,body:RelationshipMentionActionReq
 def relationship_candidate_action(candidate_id:int,body:RelationshipCandidateActionRequest,principal:Principal=Depends(authenticate_private_request)):
     with SessionLocal() as s:
         packet=build_relationship_candidate_packet(s,candidate_id);authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},packet["source_entity"]["universe"]);authorize(principal,"relationships:write",{"RESEARCHER","REVIEWER","ADMIN"},packet["target_entity"]["universe"])
-        try:candidate=adjudicate_relationship_candidate(s,candidate_id,body.action,principal.subject,body.rationale,body.expected_status)
+        reviewer_role=next((x for x in ("RESEARCHER","REVIEWER") if x in principal.roles),"UNKNOWN")
+        try:candidate=adjudicate_relationship_candidate(s,candidate_id,body.action,principal.subject,body.rationale,body.expected_status,body.review_batch_id,reviewer_role)
         except RelationshipResearchError as exc:raise HTTPException(status_code=422,detail=str(exc))
-        result=build_relationship_candidate_packet(s,candidate.id);audit_access(s,principal,"RELATIONSHIP_CANDIDATE_ACTION",{"candidate_id":candidate.id,"action":body.action.upper(),"resulting_state":candidate.status,"resulting_assertion_id":candidate.resulting_assertion_id});s.commit();return result
+        result=build_relationship_candidate_packet(s,candidate.id);audit_access(s,principal,"RELATIONSHIP_CANDIDATE_ACTION",{"candidate_id":candidate.id,"review_batch_id":body.review_batch_id,"action":body.action.upper(),"resulting_state":candidate.status,"resulting_assertion_id":candidate.resulting_assertion_id});s.commit();return result
 
 @app.get("/relationship-review")
 def relationship_review_queue(status:str="HUMAN_REVIEW_REQUIRED",relation_type:Optional[str]=None,sensitive:Optional[bool]=None,min_confidence:float=Query(0,ge=0,le=1),limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
