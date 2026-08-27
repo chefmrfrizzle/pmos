@@ -1,4 +1,12 @@
 import {expect,test} from '@playwright/test'
+test('public presentation explains the product and leads to the demo',async({page})=>{
+ await page.goto('/presentation')
+ await expect(page.getByRole('heading',{name:'Turn fragmented evidence and relationships into transaction-ready intelligence.'})).toBeVisible()
+ await expect(page.getByText('Safe to share.')).toBeVisible()
+ await expect(page.getByText('Sealed by design.')).toBeVisible()
+ await page.getByRole('link',{name:'Explore the transaction'}).click()
+ await expect(page.getByRole('heading',{name:'Command Center'})).toBeVisible()
+})
 test('public demo controls and routes work',async({page},testInfo)=>{
  await page.goto('/');await expect(page.getByRole('heading',{name:'Command Center'})).toBeVisible()
  if(testInfo.project.name==='mobile'){await page.getByRole('button',{name:'Open navigation'}).click();await expect(page.getByLabel('Primary navigation')).toBeVisible();await page.getByRole('button',{name:'Close navigation'}).click()}
