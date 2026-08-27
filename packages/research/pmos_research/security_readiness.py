@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func,select
 
 from .audit_ledger import append_ledger_event,verify_ledger
-from .db import ControlAssuranceRun,EvidenceReviewAssignment,IdentityReviewAssignment,IncidentResponseExerciseRun,PrivateSaleCase,RelationshipAssertion,RelationshipMentionReviewAssignment,RestoreDrillRun,RetentionAssessmentRun,ReviewerRosterAssessmentRun,SecurityReadinessRun
+from .db import ControlAssuranceRun,CorroborationJob,Entity,EvidenceReviewAssignment,IdentityReviewAssignment,IncidentResponseExerciseRun,PrivateEgressReviewCase,PrivateSaleCase,RelationshipAssertion,RelationshipMentionReviewAssignment,RestoreDrillRun,RetentionAssessmentRun,ReviewerRosterAssessmentRun,SecurityReadinessRun
 
 def _control(control,status,evidence,limitation):return {"control":control,"status":status,"evidence":evidence,"limitation":limitation}
 def _aware(value):return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
@@ -16,6 +16,7 @@ def build_security_readiness(session,repo_root:Path,technical:dict,environment:d
     env=environment or dict(os.environ);now=datetime.now(timezone.utc);controls=[]
     repo=repo_root.resolve();db_path=Path(session.bind.url.database).resolve() if session.bind.url.database and session.bind.url.database!=":memory:" else None
     controls.append(_control("private_datastore_outside_public_repo","PROVEN" if db_path and repo not in db_path.parents else "FAIL",{"path_exposure":False},"File location only; host access controls remain separate."))
+    private_pending=session.scalar(select(func.count()).select_from(CorroborationJob).join(Entity,Entity.id==CorroborationJob.entity_id).where(Entity.universe=="imported_private",CorroborationJob.status.in_({"PENDING","RETRY_REQUIRED"}))) or 0;open_egress_reviews=session.scalar(select(func.count()).select_from(PrivateEgressReviewCase).where(PrivateEgressReviewCase.status=="OPEN")) or 0;controls.append(_control("private_research_egress_boundary","PROVEN" if private_pending==0 and open_egress_reviews==0 else "CONTAINED_REVIEW_REQUIRED" if private_pending==0 else "FAIL",{"private_jobs_eligible_for_network":private_pending,"open_legacy_attempt_reviews":open_egress_reviews},"Imported-private entities cannot enter public web research. Historical attempts require accountable security review; containment is not retrospective approval."))
     controls.append(_control("public_release_safety","PROVEN" if technical.get("public_release_check") else "FAIL",{"gate_passed":bool(technical.get("public_release_check"))},"Proves the scanned Git history/worktree/client bundle at this run."))
     controls.append(_control("backend_security_tests","PROVEN" if technical.get("backend_tests") else "FAIL",{"gate_passed":bool(technical.get("backend_tests"))},"Test evidence is not live operating evidence."))
     controls.append(_control("public_web_build_and_browser_flows","PROVEN" if technical.get("web_build") and technical.get("browser_tests") else "FAIL",{"build_passed":bool(technical.get("web_build")),"browser_tests_passed":bool(technical.get("browser_tests"))},"Does not prove private API production deployment."))
@@ -32,7 +33,7 @@ def build_security_readiness(session,repo_root:Path,technical:dict,environment:d
     exercise=session.scalar(select(IncidentResponseExerciseRun).order_by(IncidentResponseExerciseRun.id.desc()));exercise_fresh=bool(exercise and exercise.status=="PASS" and exercise.detection_count>=5 and exercise.containment_verified and exercise.recovery_verified and _aware(exercise.completed_at)>=now-timedelta(days=180));controls.append(_control("monitoring_and_incident_response","EXERCISED" if exercise_fresh else "NOT_EVIDENCED",{"fresh_release_leak_exercise":exercise_fresh,"detection_classes":exercise.detection_count if exercise else 0},"Proves local release-gate detection and containment only; external alert delivery, on-call response, and personnel timing remain unevidenced."))
     for name in ("external_security_review","gateway_rate_limit_and_waf"):
         controls.append(_control(name,"NOT_EVIDENCED",{},"Requires dated external or operational evidence; no self-attestation is accepted."))
-    blocking={"FAIL","NOT_CONFIGURED","NOT_STAFFED","NOT_EXERCISED","NOT_EVIDENCED","DESIGN_ONLY"};status="PRODUCTION_READY" if all(x["status"] not in blocking for x in controls) else "NOT_PRODUCTION_READY"
+    blocking={"FAIL","NOT_CONFIGURED","NOT_STAFFED","NOT_EXERCISED","NOT_EVIDENCED","DESIGN_ONLY","CONTAINED_REVIEW_REQUIRED"};status="PRODUCTION_READY" if all(x["status"] not in blocking for x in controls) else "NOT_PRODUCTION_READY"
     return {"classification":"PMOS PRIVATE AGGREGATE SECURITY READINESS — NO RECORD VALUES","generated_at":now.isoformat(),"status":status,"method":"fail_closed_v1","controls":controls,"summary":{state:sum(x["status"]==state for x in controls) for state in sorted({x["status"] for x in controls})}}
 
 def persist_security_readiness(session,report:dict,actor:str="security-readiness-worker")->SecurityReadinessRun:

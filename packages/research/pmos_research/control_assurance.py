@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionCandidateEvent,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipMentionReviewAssignment,RelationshipMentionReviewAssignmentEvent,RelationshipMentionReviewBatch,RelationshipMentionReviewBatchItem,RelationshipMentionReviewDecisionBinding,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    IncidentResponseExerciseRun,LegalHold,LegalHoldEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,ReviewerRosterAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    IncidentResponseExerciseRun,LegalHold,LegalHoldEvent,PrivateEgressReviewCase,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,ReviewerRosterAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -116,6 +116,8 @@ def run_control_assurance(session)->dict:
     for job in corroboration_jobs:
         bad+=job.attempts<0 or (job.status=="PENDING" and (job.attempts!=0 or job.next_attempt_at is not None)) or (job.status=="RETRY_REQUIRED" and (job.attempts not in {1,2} or job.next_attempt_at is None)) or (job.status not in {"PENDING","RETRY_REQUIRED"} and job.next_attempt_at is not None)
     controls.append(_control("corroboration_retry_lifecycle",len(corroboration_jobs),bad))
+    entities_by_id={x.id:x for x in session.scalars(select(Entity)).all()};private_jobs=[x for x in corroboration_jobs if entities_by_id.get(x.entity_id) and entities_by_id[x.entity_id].universe=="imported_private"];reviewed_job_ids=set(session.scalars(select(PrivateEgressReviewCase.corroboration_job_id)).all());bad=sum((x.attempts==0 and x.status!="PRIVATE_EGRESS_QUARANTINED") or (x.attempts>0 and x.id not in reviewed_job_ids) for x in private_jobs)
+    controls.append(_control("private_research_egress_quarantine",len(private_jobs),bad))
 
     accepted=session.scalars(select(IdentityCluster).where(IdentityCluster.status=="ACCEPTED")).all();bad=0
     for cluster in accepted:

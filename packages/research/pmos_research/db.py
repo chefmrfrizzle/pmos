@@ -242,6 +242,16 @@ class CorroborationJob(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     __table_args__ = (UniqueConstraint("entity_id", "source_url", name="uq_corroboration_target"),)
 
+class PrivateEgressReviewCase(Base):
+    __tablename__ = "private_egress_review_cases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    corroboration_job_id: Mapped[int] = mapped_column(ForeignKey("corroboration_jobs.id"), unique=True, index=True)
+    prior_status: Mapped[str] = mapped_column(String(30))
+    attempts_observed: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(30), default="OPEN", index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class ResearchSourceCandidate(Base):
     __tablename__ = "research_source_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)

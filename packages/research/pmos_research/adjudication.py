@@ -172,7 +172,7 @@ def build_review_queue(session)->Counter:
 def enqueue_corroboration(session,limit:int=0)->Counter:
     counts=Counter();seen=set()
     existing={(x.entity_id,x.source_url) for x in session.scalars(select(CorroborationJob)).all()}
-    entities=session.scalars(select(Entity).where(Entity.official_url.is_not(None),Entity.official_url!="",Entity.mandate.is_not(None),Entity.mandate!="").order_by(Entity.entity_type,Entity.canonical_name,Entity.id)).all()
+    entities=session.scalars(select(Entity).where(Entity.universe!="imported_private",Entity.official_url.is_not(None),Entity.official_url!="",Entity.mandate.is_not(None),Entity.mandate!="").order_by(Entity.entity_type,Entity.canonical_name,Entity.id)).all()
     for entity in entities:
         if entity.canonical_name in seen:counts["canonical_duplicate_skipped"]+=1;continue
         seen.add(entity.canonical_name);source_url=normalize_public_url(entity.official_url);domain=_domain(source_url)
@@ -201,7 +201,10 @@ def queue_summary(session)->dict:
     return {"review_queue":dict(sorted(review.items())),"corroboration_jobs":dict(sorted(jobs.items())),"generated_at":datetime.now(timezone.utc).isoformat()}
 
 def run_corroboration_job(session,job:CorroborationJob,adapter)->str:
-    job.attempts+=1;job.updated_at=datetime.now(timezone.utc);entity=session.get(Entity,job.entity_id)
+    entity=session.get(Entity,job.entity_id)
+    if not entity or entity.universe=="imported_private":
+        job.status="PRIVATE_EGRESS_QUARANTINED" if job.attempts==0 else "PRIVATE_EGRESS_REVIEW_REQUIRED";job.next_attempt_at=None;job.updated_at=datetime.now(timezone.utc);append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","PRIVATE_EGRESS_BLOCKED",{"entity_id":job.entity_id,"status":job.status,"prior_attempts":job.attempts});return job.status
+    job.attempts+=1;job.updated_at=datetime.now(timezone.utc)
     try:
         snapshot=adapter.fetch(job.source_url)
         status=snapshot.get("status","failed")

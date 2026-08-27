@@ -9,3 +9,5 @@ Private dossier exports remain under `PMOS_PRIVATE_ROOT/exports` and are never c
 Approved retention policies are private operating documents and must remain outside the public repository. The public repository contains only a deliberately invalid draft template with no retention periods or approver. Aggregate retention assessments may be stored privately; record-level disposition lists and legal-hold references never enter public fixtures, documentation, client bundles, or deployments.
 
 Approved reviewer rosters, OIDC subjects, staffing assignments, and personnel scopes are private operating records. The public repository contains only a deliberately invalid draft roster template, generic least-privilege validation, and aggregate assessment logic.
+
+Private-seed entities are never eligible for public-web corroboration by default. Queue creation, worker selection, and worker execution enforce this independently. Legacy migration records only aggregate containment totals publicly; entity-specific review cases stay in the private datastore.

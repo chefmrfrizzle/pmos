@@ -34,6 +34,8 @@ Relationship evidence controls also record entity-pair name coverage, predicate-
 
 `ReviewerRosterAssessmentRun` stores a content-hashed aggregate staffing preflight. The approved roster remains external; assessment records preserve only its hash, frozen workflow/universe coverage, and separation-of-duty gaps—not OIDC subject identities.
 
+`PrivateEgressReviewCase` preserves the existence and prior outcome of any legacy public-web attempt involving an `imported_private` entity. It references the governed job without copying entity names, URLs, or evidence values. Unattempted legacy jobs are terminally quarantined; attempted jobs remain historically intact and require security review.
+
 `RelationshipResearchCandidate` is a pre-assertion queue item created only when a versioned rule finds a controlled relationship phrase and a full registered counterparty name in an exact passage. It retains the source/target IDs, suggested type, passage, reasons, and conservative confidence. Review may reject, defer, or promote it into a separate assertion; discovery never writes a graph edge or verified relationship.
 
 `RelationshipMentionCandidate` preserves a bounded named object following a controlled relationship phrase when no registered target matches. Its lifecycle is `ENTITY_RESOLUTION_REQUIRED`, `TARGET_PROPOSED`, `TARGET_LINKED`, `DEFERRED`, or `REJECTED`. Linking requires a distinct registered target and produces only a `HUMAN_REVIEW_REQUIRED` relationship candidate; it never auto-registers an institution.

@@ -12,6 +12,7 @@ from pmos_research.runtime_isolation import apply_resource_limits,sanitized_envi
 
 JOBS={
     "corroboration":"run_corroboration_jobs.py",
+    "private-egress-quarantine":"quarantine_private_corroboration.py",
     "source-discovery":"discover_case_sources.py",
     "source-retrieval":"retrieve_source_candidates.py",
     "source-retry-requeue":"requeue_due_source_retries.py",

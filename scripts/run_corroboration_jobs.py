@@ -16,8 +16,8 @@ args=parser.parse_args()
 if args.limit<1 or args.limit>100:raise SystemExit("--limit must be between 1 and 100")
 init_db();adapter=OfficialWebAdapter();counts=Counter()
 with SessionLocal() as db:
-    now=datetime.now(timezone.utc);query=select(CorroborationJob).where(or_(CorroborationJob.status=="PENDING",and_(CorroborationJob.status=="RETRY_REQUIRED",CorroborationJob.next_attempt_at<=now)))
-    if args.case_cohort:query=query.join(Entity,Entity.id==CorroborationJob.entity_id).join(DiligenceCase,DiligenceCase.entity_id==Entity.id).where(Entity.universe!="imported_private").distinct()
+    now=datetime.now(timezone.utc);query=select(CorroborationJob).join(Entity,Entity.id==CorroborationJob.entity_id).where(Entity.universe!="imported_private",or_(CorroborationJob.status=="PENDING",and_(CorroborationJob.status=="RETRY_REQUIRED",CorroborationJob.next_attempt_at<=now)))
+    if args.case_cohort:query=query.join(DiligenceCase,DiligenceCase.entity_id==Entity.id).distinct()
     jobs=db.scalars(query.order_by(CorroborationJob.id).limit(args.limit)).all()
     for job in jobs:
         counts[run_corroboration_job(db,job,adapter)]+=1;db.commit()

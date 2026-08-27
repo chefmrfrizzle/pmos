@@ -2,7 +2,7 @@ from pmos_research.entity_resolution import canonicalize_name, domain, resolve, 
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import ImportSafetyError,detect_header,import_csv,preflight_import
 from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, Evidence, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
-from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate, run_corroboration_job
+from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate,enqueue_corroboration,run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
 from pmos_research.audit_ledger import append_ledger_event,verify_ledger
@@ -228,6 +228,14 @@ def test_corroboration_transient_failure_retries_with_backoff_and_unsafe_target_
         assert run_corroboration_job(db,retry,Transient())=="RETRY_REQUIRED" and retry.next_attempt_at and retry.attempts==1
         retry.attempts=2;assert run_corroboration_job(db,retry,Transient())=="FAILED" and retry.next_attempt_at is None and retry.attempts==3
         assert run_corroboration_job(db,terminal,Unsafe())=="FAILED" and terminal.next_attempt_at is None
+
+def test_private_entities_cannot_be_enqueued_or_fetched_by_public_corroboration():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    class MustNotFetch:
+        def fetch(self,url):raise AssertionError("private entity reached network adapter")
+    with factory() as db:
+        private=Entity(name="Private Example",canonical_name="private example",universe="imported_private",official_url="https://example.test",mandate="private");public=Entity(name="Public Example",canonical_name="public example",universe="pensions",official_url="https://public.example.test",mandate="pension");db.add_all([private,public]);db.flush();result=enqueue_corroboration(db);assert result["queued"]==1 and db.scalar(select(func.count()).select_from(CorroborationJob).where(CorroborationJob.entity_id==private.id))==0
+        job=CorroborationJob(entity_id=private.id,source_url=private.official_url,source_domain="example.test",checkpoint_json="{}");db.add(job);db.flush();assert run_corroboration_job(db,job,MustNotFetch())=="PRIVATE_EGRESS_QUARANTINED" and job.attempts==0
 
 def test_diligence_case_has_type_specific_mandatory_checks():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
