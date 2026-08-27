@@ -10,7 +10,7 @@ from pydantic import BaseModel,Field
 from sqlalchemy import select
 from .security import Principal,authenticate_private_request,authorize
 from pmos_research.audit_ledger import append_ledger_event
-from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,LegalHold,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipMentionReviewAssignment,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
+from pmos_research.db import ClaimCheckRoutingCandidate,CheckResult,ControlAssuranceRun,DiligenceCase,DiligenceCheckEvidence,EvidencePassage,ExportRequest,JurisdictionReviewCase,LegalHold,PrivateEgressReviewCase,PrivateSaleCase,PrivateSaleGate,PublisherIndependenceAssessment,RelationshipAssertion,RelationshipMentionCandidate,RelationshipMentionReviewAssignment,RelationshipResearchCandidate,ResearchPassageCandidate,ResolutionDecision,ReviewQueueItem,SecurityReadinessRun,SourceChangeEvent,SourceDocument,UniverseCoverageRun,init_db, SessionLocal, Entity
 from pmos_research.case_checks import CheckAdjudicationError,adjudicate_check,evidence_sufficiency,submit_check_evidence
 from pmos_research.diligence import readiness
 from pmos_research.dossier import build_dossier
@@ -35,6 +35,7 @@ from pmos_research.evidence_review_assignment import EvidenceReviewAssignmentErr
 from pmos_research.publisher_independence import PublisherIndependenceError,adjudicate_publisher_independence,build_publisher_independence_packet,propose_publisher_independence
 from pmos_research.relationship_mention_review import RelationshipMentionReviewError,assign_mention_reviewer,assigned_mention_batch_items,build_mention_review_batch_packet,close_mention_review_batch,freeze_mention_review_batch,revoke_mention_assignment
 from pmos_research.retention import RetentionError,adjudicate_legal_hold,build_legal_hold_packet,propose_class_legal_hold
+from pmos_research.private_egress_review import PrivateEgressReviewError,adjudicate_private_egress,build_private_egress_packet
 
 class CheckEvidenceRequest(BaseModel):
     claim_ids:list[int]=Field(min_length=1,max_length=50)
@@ -179,6 +180,11 @@ class LegalHoldActionRequest(BaseModel):
     rationale:str=Field(min_length=10,max_length=2000)
     expected_status:str=Field(min_length=6,max_length=30)
 
+class PrivateEgressActionRequest(BaseModel):
+    action:str=Field(min_length=16,max_length=40)
+    rationale:str=Field(min_length=20,max_length=4000)
+    expected_status:str=Field(min_length=4,max_length=40)
+
 @asynccontextmanager
 async def lifespan(app):
     init_db();yield
@@ -268,6 +274,20 @@ def legal_hold_action(hold_id:int,body:LegalHoldActionRequest,principal:Principa
         try:hold=adjudicate_legal_hold(s,hold_id,body.action,principal.subject,body.rationale,body.expected_status)
         except RetentionError as exc:raise HTTPException(status_code=422,detail=str(exc))
         packet=build_legal_hold_packet(s,hold.id);audit_access(s,principal,"LEGAL_HOLD_ACTION",{"hold_id":hold.id,"action":body.action.upper(),"resulting_state":hold.status,"scope_reference_hash":hold.scope_reference_hash});s.commit();return packet
+
+@app.get("/security/private-egress-reviews")
+def private_egress_review_queue(status:str="OPEN",limit:int=Query(50,ge=1,le=100),principal:Principal=Depends(authenticate_private_request)):
+    authorize(principal,"security:review",{"ADMIN","COUNSEL"})
+    with SessionLocal() as s:
+        rows=[build_private_egress_packet(s,x.id) for x in s.scalars(select(PrivateEgressReviewCase).where(PrivateEgressReviewCase.status==status.upper()).order_by(PrivateEgressReviewCase.id).limit(limit))];audit_access(s,principal,"PRIVATE_EGRESS_REVIEWS_LISTED",{"status":status.upper(),"limit":limit,"result_count":len(rows)});s.commit();return rows
+
+@app.post("/security/private-egress-reviews/{case_id}/actions")
+def private_egress_review_action(case_id:int,body:PrivateEgressActionRequest,principal:Principal=Depends(authenticate_private_request)):
+    approval=body.action.upper().startswith("APPROVE_");authorize(principal,"security:approve" if approval else "security:write",{"ADMIN","COUNSEL"})
+    with SessionLocal() as s:
+        try:case=adjudicate_private_egress(s,case_id,body.action,principal.subject,"COUNSEL" if "COUNSEL" in principal.roles else "ADMIN",body.rationale,body.expected_status)
+        except PrivateEgressReviewError as exc:raise HTTPException(status_code=422,detail=str(exc))
+        packet=build_private_egress_packet(s,case.id);audit_access(s,principal,"PRIVATE_EGRESS_REVIEW_ACTION",{"case_id":case.id,"action":body.action.upper(),"resulting_state":case.status,"evidence_package_hash":packet["evidence"]["evidence_package_hash"]});s.commit();return packet
 
 @app.get("/identity-review")
 def identity_review_queue(review_batch_id:int=Query(gt=0),resolution_state:Optional[str]=None,min_priority:int=Query(0,ge=0,le=100),limit:int=Query(50,ge=1,le=100),include_excerpt:bool=False,principal:Principal=Depends(authenticate_private_request)):

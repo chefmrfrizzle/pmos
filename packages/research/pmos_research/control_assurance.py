@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionCandidateEvent,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipMentionReviewAssignment,RelationshipMentionReviewAssignmentEvent,RelationshipMentionReviewBatch,RelationshipMentionReviewBatchItem,RelationshipMentionReviewDecisionBinding,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    IncidentResponseExerciseRun,LegalHold,LegalHoldEvent,PrivateEgressReviewCase,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,ReviewerRosterAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    IncidentResponseExerciseRun,LegalHold,LegalHoldEvent,PrivateEgressReviewCase,PrivateEgressReviewEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,ReviewerRosterAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -23,6 +23,7 @@ from .identity_review_batch import build_identity_batch_packet
 from .publisher_independence import build_publisher_independence_packet
 from .relationship_research import mention_identity_package_hash
 from .relationship_mention_review import build_mention_review_batch_packet
+from .private_egress_review import evidence_package
 
 QUALIFYING_CLAIMS={"SUPPORTED","CORROBORATED","SPECIALIST_VERIFIED"}
 
@@ -118,6 +119,13 @@ def run_control_assurance(session)->dict:
     controls.append(_control("corroboration_retry_lifecycle",len(corroboration_jobs),bad))
     entities_by_id={x.id:x for x in session.scalars(select(Entity)).all()};private_jobs=[x for x in corroboration_jobs if entities_by_id.get(x.entity_id) and entities_by_id[x.entity_id].universe=="imported_private"];reviewed_job_ids=set(session.scalars(select(PrivateEgressReviewCase.corroboration_job_id)).all());bad=sum((x.attempts==0 and x.status!="PRIVATE_EGRESS_QUARANTINED") or (x.attempts>0 and x.id not in reviewed_job_ids) for x in private_jobs)
     controls.append(_control("private_research_egress_quarantine",len(private_jobs),bad))
+    egress_cases=session.scalars(select(PrivateEgressReviewCase)).all();bad=0
+    for case in egress_cases:
+        job=session.get(CorroborationJob,case.corroboration_job_id);events=session.scalars(select(PrivateEgressReviewEvent).where(PrivateEgressReviewEvent.case_id==case.id).order_by(PrivateEgressReviewEvent.id)).all();proposal=next((x for x in events if x.action.startswith("PROPOSE_")),None);approval=next((x for x in reversed(events) if x.action.startswith("APPROVE_")),None)
+        try:current=evidence_package(session,case.id)["evidence_package_hash"]
+        except Exception:current=None
+        terminal=case.status in {"RESOLVED_NO_MATERIAL_DISCLOSURE","ESCALATED"};bad+=not job or job.attempts<1 or not current or (terminal and (not proposal or not approval or proposal.actor==approval.actor or proposal.evidence_package_hash!=approval.evidence_package_hash or approval.evidence_package_hash!=current))
+    controls.append(_control("private_egress_review_maker_checker",len(egress_cases),bad))
 
     accepted=session.scalars(select(IdentityCluster).where(IdentityCluster.status=="ACCEPTED")).all();bad=0
     for cluster in accepted:

@@ -252,6 +252,19 @@ class PrivateEgressReviewCase(Base):
     reason: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class PrivateEgressReviewEvent(Base):
+    __tablename__ = "private_egress_review_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(ForeignKey("private_egress_review_cases.id"), index=True)
+    action: Mapped[str] = mapped_column(String(50), index=True)
+    actor: Mapped[str] = mapped_column(String(150))
+    actor_role: Mapped[str] = mapped_column(String(40))
+    rationale: Mapped[str] = mapped_column(Text)
+    prior_state: Mapped[str] = mapped_column(String(30))
+    resulting_state: Mapped[str] = mapped_column(String(30))
+    evidence_package_hash: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class ResearchSourceCandidate(Base):
     __tablename__ = "research_source_candidates"
     id: Mapped[int] = mapped_column(primary_key=True)
