@@ -75,7 +75,7 @@ Run `python scripts/run_isolated_job.py incident-exercise` to exercise the local
 
 Reviewer staffing is configured only through an approved roster on encrypted storage outside the repository. The roster preflight rejects wildcard scope and mixed maker/checker/assigner authority, requires distinct subjects for every frozen workflow/universe, and persists only aggregate coverage plus hashes. The roster never enters Git, client bundles, or the public API.
 
-`imported_private` entities are categorically ineligible for public-web corroboration. The enqueuer, worker query, and worker execution path each enforce the boundary independently. Legacy unattempted jobs are quarantined locally; historical attempts are preserved and opened as security-review cases rather than erased or silently accepted.
+`imported_private` entities are categorically ineligible for public-web corroboration or deep-source retrieval. Homepage enqueue/selection/execution and deep-source discovery/selection/persistence each enforce the boundary independently. Legacy unattempted jobs are quarantined locally; historical attempts are preserved and opened as security-review cases rather than erased or silently accepted.
 
 Legacy-attempt review packets omit entity names and URLs. They expose only hashed domain and bounded request metadata. Closure or escalation requires a maker proposal, independent approval, unchanged package hash, and append-only audit history; query-bearing or credential-bearing requests cannot receive no-material-disclosure closure.
 

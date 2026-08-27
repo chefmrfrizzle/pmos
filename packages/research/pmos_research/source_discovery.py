@@ -57,6 +57,8 @@ def discover_source_links(base_url:str,html:str,limit:int=20)->list[dict]:
     return sorted(found.values(),key=lambda x:(-x["score"],x["source_url"]))[:max(1,min(limit,50))]
 
 def persist_source_candidates(session,entity:Entity,base_url:str,html:str,actor:str="research-worker",limit:int=20)->Counter:
+    if entity.universe=="imported_private":
+        append_ledger_event(session,"SOURCE_DISCOVERY",entity.id,actor,"SYSTEM","PRIVATE_SOURCE_DISCOVERY_BLOCKED",{"reason":"imported_private is ineligible for public-web source discovery"});return Counter({"private_egress_blocked":1})
     counts=Counter();candidates=discover_source_links(base_url,html,limit);existing={x.source_url:x for x in session.scalars(select(ResearchSourceCandidate).where(ResearchSourceCandidate.entity_id==entity.id)).all()}
     for item in candidates:
         if item["source_url"] in existing:counts["existing"]+=1;continue

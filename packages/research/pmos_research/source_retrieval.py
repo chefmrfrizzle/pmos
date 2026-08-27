@@ -8,7 +8,13 @@ from urllib.parse import urlparse
 from sqlalchemy import select
 
 from .audit_ledger import append_ledger_event
-from .db import EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument,SourceRetrievalAttempt
+from .db import Entity,EvidencePassage,ResearchDocumentSnapshot,ResearchPassageCandidate,ResearchSourceCandidate,SourceDocument,SourceRetrievalAttempt
+
+class PrivateResearchEgressBlocked(ValueError):pass
+def require_public_candidate(session,candidate:ResearchSourceCandidate)->Entity:
+    entity=session.get(Entity,candidate.entity_id)
+    if not entity or entity.universe=="imported_private":raise PrivateResearchEgressBlocked("source candidate is not eligible for public-web retrieval")
+    return entity
 
 PREDICATE_TERMS={
     "legal_identity":("legal name","incorporated","registered as","company number","registered company","legal entity"),
@@ -82,6 +88,7 @@ def queue_passage_candidates(session,candidate:ResearchSourceCandidate,document:
     return queue_extracted_passages(session,candidate,document,items)
 
 def persist_retrieved_candidate(session,candidate:ResearchSourceCandidate,snapshot:dict,actor:str="research-worker")->Counter:
+    require_public_candidate(session,candidate)
     if snapshot.get("status")!="ok":raise ValueError("only successful HTML snapshots can be persisted")
     if urlparse(snapshot["url"]).hostname.casefold().removeprefix("www.")!=candidate.source_domain:raise ValueError("retrieved document left the approved source domain")
     text=" ".join(snapshot.get("text","").split())[:50000]

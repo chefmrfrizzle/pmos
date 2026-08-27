@@ -1,7 +1,7 @@
 from pmos_research.entity_resolution import canonicalize_name, domain, resolve, MatchState
 from pmos_research.scoring import strategic_score, explain_score
 from pmos_research.importers import ImportSafetyError,detect_header,import_csv,preflight_import
-from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, Evidence, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate, RelationshipAssertion, ResolutionDecision, ReviewQueueItem, CheckResult, ConflictCase, SourceDocument, install_ledger_guards
+from pmos_research.db import Base, AdjudicationEvent, AuditLedgerEntry, Claim, ClaimEvidence, Contact, CorroborationJob, Entity, Evidence, EvidencePassage, IdentityCluster, IdentityMembership, ImportBatch, LegalIdentifier, RawImportRow, RegistryIdentifierCandidate,RelationshipAssertion,ResearchSourceCandidate,ResolutionDecision,ReviewQueueItem,CheckResult,ConflictCase,SourceDocument,install_ledger_guards
 from pmos_research.adjudication import AdjudicationInputError, StaleReviewError, adjudicate,enqueue_corroboration,run_corroboration_job
 from pmos_research.diligence import open_case, readiness, specialist_signoff
 from pmos_research.identity_audit import shadow_audit
@@ -236,6 +236,15 @@ def test_private_entities_cannot_be_enqueued_or_fetched_by_public_corroboration(
     with factory() as db:
         private=Entity(name="Private Example",canonical_name="private example",universe="imported_private",official_url="https://example.test",mandate="private");public=Entity(name="Public Example",canonical_name="public example",universe="pensions",official_url="https://public.example.test",mandate="pension");db.add_all([private,public]);db.flush();result=enqueue_corroboration(db);assert result["queued"]==1 and db.scalar(select(func.count()).select_from(CorroborationJob).where(CorroborationJob.entity_id==private.id))==0
         job=CorroborationJob(entity_id=private.id,source_url=private.official_url,source_domain="example.test",checkpoint_json="{}");db.add(job);db.flush();assert run_corroboration_job(db,job,MustNotFetch())=="PRIVATE_EGRESS_QUARANTINED" and job.attempts==0
+
+def test_private_entities_cannot_discover_or_persist_deep_sources():
+    from pmos_research.source_discovery import persist_source_candidates
+    from pmos_research.source_retrieval import PrivateResearchEgressBlocked,persist_retrieved_candidate
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        entity=Entity(name="Private Example",canonical_name="private example",universe="imported_private");db.add(entity);db.flush();html='<a href="/annual-report">Annual report</a>';result=persist_source_candidates(db,entity,"https://example.test",html);assert result["private_egress_blocked"]==1 and db.scalar(select(func.count()).select_from(ResearchSourceCandidate))==0
+        candidate=ResearchSourceCandidate(entity_id=entity.id,source_url="https://example.test/annual-report",source_domain="example.test",document_type="ANNUAL_REPORT",target_predicates_json="[]",discovered_from_url="https://example.test",discovery_score=90);db.add(candidate);db.flush()
+        with pytest.raises(PrivateResearchEgressBlocked):persist_retrieved_candidate(db,candidate,{"status":"ok","url":candidate.source_url,"title":"Synthetic","text":"Synthetic","hash":"f"*64})
 
 def test_diligence_case_has_type_specific_mandatory_checks():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)

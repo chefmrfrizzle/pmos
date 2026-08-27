@@ -119,6 +119,10 @@ def run_control_assurance(session)->dict:
     controls.append(_control("corroboration_retry_lifecycle",len(corroboration_jobs),bad))
     entities_by_id={x.id:x for x in session.scalars(select(Entity)).all()};private_jobs=[x for x in corroboration_jobs if entities_by_id.get(x.entity_id) and entities_by_id[x.entity_id].universe=="imported_private"];reviewed_job_ids=set(session.scalars(select(PrivateEgressReviewCase.corroboration_job_id)).all());bad=sum((x.attempts==0 and x.status!="PRIVATE_EGRESS_QUARANTINED") or (x.attempts>0 and x.id not in reviewed_job_ids) for x in private_jobs)
     controls.append(_control("private_research_egress_quarantine",len(private_jobs),bad))
+    private_sources=session.scalars(select(ResearchSourceCandidate).join(Entity,Entity.id==ResearchSourceCandidate.entity_id).where(Entity.universe=="imported_private")).all();bad=0
+    for candidate in private_sources:
+        attempted=session.scalar(select(SourceRetrievalAttempt.id).where(SourceRetrievalAttempt.source_candidate_id==candidate.id).limit(1));bad+=bool(attempted) or candidate.status!="PRIVATE_EGRESS_QUARANTINED"
+    controls.append(_control("private_deep_source_egress_quarantine",len(private_sources),bad))
     egress_cases=session.scalars(select(PrivateEgressReviewCase)).all();bad=0
     for case in egress_cases:
         job=session.get(CorroborationJob,case.corroboration_job_id);events=session.scalars(select(PrivateEgressReviewEvent).where(PrivateEgressReviewEvent.case_id==case.id).order_by(PrivateEgressReviewEvent.id)).all();proposal=next((x for x in events if x.action.startswith("PROPOSE_")),None);approval=next((x for x in reversed(events) if x.action.startswith("APPROVE_")),None)
