@@ -32,6 +32,8 @@ Relationship evidence controls also record entity-pair name coverage, predicate-
 
 `RetentionAssessmentRun` stores a content-hashed aggregate dry-run report; it never contains record values or deletion targets. `LegalHold` stores only a one-way scope-reference hash and maker/checker metadata. Placement and independent release remain in `LegalHoldEvent`. Audit, adjudication, graph, claim/evidence, and transaction-case classes are protected from the disposition engine; disposable classes may only enter a review queue under an externally approved policy.
 
+`ReviewerRosterAssessmentRun` stores a content-hashed aggregate staffing preflight. The approved roster remains external; assessment records preserve only its hash, frozen workflow/universe coverage, and separation-of-duty gaps—not OIDC subject identities.
+
 `RelationshipResearchCandidate` is a pre-assertion queue item created only when a versioned rule finds a controlled relationship phrase and a full registered counterparty name in an exact passage. It retains the source/target IDs, suggested type, passage, reasons, and conservative confidence. Review may reject, defer, or promote it into a separate assertion; discovery never writes a graph edge or verified relationship.
 
 `RelationshipMentionCandidate` preserves a bounded named object following a controlled relationship phrase when no registered target matches. Its lifecycle is `ENTITY_RESOLUTION_REQUIRED`, `TARGET_PROPOSED`, `TARGET_LINKED`, `DEFERRED`, or `REJECTED`. Linking requires a distinct registered target and produces only a `HUMAN_REVIEW_REQUIRED` relationship candidate; it never auto-registers an institution.

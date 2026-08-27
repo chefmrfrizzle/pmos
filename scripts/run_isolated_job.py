@@ -25,6 +25,7 @@ JOBS={
     "retention-assessment":"assess_retention.py",
     "restore-drill":"run_restore_drill.py",
     "incident-exercise":"run_incident_exercise.py",
+    "reviewer-roster":"assess_reviewer_roster.py",
     "universe-coverage":"assess_universe_coverage.py",
     "jurisdiction-review-prepare":"prepare_jurisdiction_review.py",
     "evidence-review-freeze":"freeze_evidence_review_batch.py",
