@@ -14,7 +14,7 @@ from .db import (
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionCandidateEvent,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipMentionReviewAssignment,RelationshipMentionReviewAssignmentEvent,RelationshipMentionReviewBatch,RelationshipMentionReviewBatchItem,RelationshipMentionReviewDecisionBinding,RelationshipResearchCandidate,
     ResearchDocumentSnapshot,
     ResearchPassageAdjudicationEvent,ResearchPassageCandidate,
-    LegalHold,LegalHoldEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
+    IncidentResponseExerciseRun,LegalHold,LegalHoldEvent,PublisherIndependenceAssessment,PublisherIndependenceEvent,RestoreDrillRun,RetentionAssessmentRun,SecurityReadinessRun,SourceChangeEvent,SourceChangeReviewEvent,SourceDocument,SourceRetrievalAttempt,ResearchSourceCandidate,ReviewQueueItem,UniverseCoverageRun,
 )
 from .relationship_controls import relationship_evidence_controls
 from .private_sale import gate_sufficiency
@@ -85,6 +85,12 @@ def run_control_assurance(session)->dict:
         except Exception:valid=False
         bad+=not valid or hashlib.sha256(run.report_json.encode()).hexdigest()!=run.result_hash or run.status!="PASS" or len(run.backup_sha256)!=64 or run.sqlite_integrity!="ok" or not run.encrypted_storage_verified or not run.temporary_restore_removed or run.ledger_entries<0
     controls.append(_control("restore_drill_integrity",len(restore_drills),bad))
+    exercises=session.scalars(select(IncidentResponseExerciseRun)).all();bad=0
+    for run in exercises:
+        try:parsed=json.loads(run.report_json);valid=parsed.get("classification")=="PMOS PRIVATE AGGREGATE INCIDENT EXERCISE — SYNTHETIC CANARIES ONLY" and parsed.get("status")==run.status and parsed.get("scenario")==run.scenario and parsed.get("detection_count")==run.detection_count
+        except Exception:valid=False
+        bad+=not valid or hashlib.sha256(run.report_json.encode()).hexdigest()!=run.report_hash or run.status!="PASS" or run.detection_count<5 or not run.containment_verified or not run.recovery_verified
+    controls.append(_control("incident_response_exercise_integrity",len(exercises),bad))
     holds=session.scalars(select(LegalHold)).all();bad=0
     for hold in holds:
         events=session.scalars(select(LegalHoldEvent).where(LegalHoldEvent.legal_hold_id==hold.id).order_by(LegalHoldEvent.id)).all();proposal=next((x for x in events if x.action=="PROPOSE"),None);approval=next((x for x in events if x.action=="APPROVE"),None);released=next((x for x in reversed(events) if x.action=="RELEASE"),None)

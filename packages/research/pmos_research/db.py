@@ -458,6 +458,19 @@ class RestoreDrillRun(Base):
     actor: Mapped[str] = mapped_column(String(150))
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
+class IncidentResponseExerciseRun(Base):
+    __tablename__ = "incident_response_exercise_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    status: Mapped[str] = mapped_column(String(30), index=True)
+    scenario: Mapped[str] = mapped_column(String(80), index=True)
+    report_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    report_json: Mapped[str] = mapped_column(Text)
+    detection_count: Mapped[int] = mapped_column(Integer)
+    containment_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    recovery_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    actor: Mapped[str] = mapped_column(String(150))
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
 class LegalHold(Base):
     __tablename__ = "legal_holds"
     id: Mapped[int] = mapped_column(primary_key=True)

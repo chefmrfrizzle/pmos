@@ -173,6 +173,8 @@ The job does not initialize or migrate schema. It first verifies the existing so
 
 Exercise recovery with `python scripts/run_isolated_job.py restore-drill`. The job selects the latest verified manifest, restores it only to a newly created encrypted temporary directory outside the public repository, verifies the artifact hash, SQLite integrity, and audit ledger, removes the temporary restored database, and records only aggregate proof. A successful local SQLite drill does not prove recovery for a future production PostgreSQL deployment.
 
+Exercise public-leak detection and containment with `python scripts/run_isolated_job.py incident-exercise`. The job creates an isolated synthetic Git repository outside PMOS, verifies the release gate catches private-path, database, email-bearing CSV, secret, and historical-blob canaries, removes the synthetic compromised repository, and proves a clean recovery repository passes. No real private value or credential is used. External alert delivery and timed staff response remain separate production evidence requirements.
+
 Verify and restore without overwriting the operating database:
 
 ```bash
