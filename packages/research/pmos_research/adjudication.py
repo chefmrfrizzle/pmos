@@ -1,10 +1,11 @@
 from __future__ import annotations
 import json
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime,timedelta,timezone
 from urllib.parse import urlparse
 import hashlib
 import secrets
+import httpx
 from sqlalchemy import select
 from .db import (
     AdjudicationEvent, Claim, Contact, CorroborationJob, Entity, Evidence,
@@ -227,4 +228,5 @@ def run_corroboration_job(session,job:CorroborationJob,adapter)->str:
         job.checkpoint_json=json.dumps(checkpoint,sort_keys=True)
         job.last_error=None;append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_COMPLETED",{"entity_id":job.entity_id,"status":job.status,"evidence_hash":content_hash,"identity_supported":supported});return job.status
     except Exception as exc:
-        job.status="FAILED";job.last_error=f"{type(exc).__name__}: {exc}"[:1000];append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_FAILED",{"entity_id":job.entity_id,"status":job.status,"error_type":type(exc).__name__});return job.status
+        transient=isinstance(exc,(httpx.TransportError,httpx.TimeoutException)) or isinstance(exc,httpx.HTTPStatusError) and (exc.response.status_code==429 or exc.response.status_code>=500)
+        retry=transient and job.attempts<3;job.status="RETRY_REQUIRED" if retry else "FAILED";job.next_attempt_at=datetime.now(timezone.utc)+timedelta(minutes=5*(2**(job.attempts-1))) if retry else None;job.last_error=f"{type(exc).__name__}: {exc}"[:1000];append_ledger_event(session,"RESEARCH_JOB",job.id,"research-worker","SYSTEM","JOB_RETRY_SCHEDULED" if retry else "JOB_FAILED",{"entity_id":job.entity_id,"status":job.status,"error_type":type(exc).__name__,"attempt":job.attempts,"retryable":retry});return job.status

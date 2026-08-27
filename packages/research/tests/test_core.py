@@ -217,6 +217,18 @@ def test_homepage_match_supports_claim_but_not_whole_entity():
         checkpoint=__import__("json").loads(job.checkpoint_json)
         assert {"document_id","passage_id","claim_evidence_id"}<=checkpoint.keys()
 
+def test_corroboration_transient_failure_retries_with_backoff_and_unsafe_target_fails_terminally():
+    engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    class Transient:
+        def fetch(self,url):raise httpx.ConnectTimeout("temporary timeout")
+    class Unsafe:
+        def fetch(self,url):raise UnsafeResearchTarget("non-public target address is forbidden")
+    with factory() as db:
+        entity=Entity(name="Example",canonical_name="example",universe="test",official_url="https://example.test");db.add(entity);db.flush();retry=CorroborationJob(entity_id=entity.id,source_url=entity.official_url,source_domain="example.test",checkpoint_json="{}");terminal=CorroborationJob(entity_id=entity.id,source_url="https://other.example.test",source_domain="other.example.test",checkpoint_json="{}");db.add_all([retry,terminal]);db.flush()
+        assert run_corroboration_job(db,retry,Transient())=="RETRY_REQUIRED" and retry.next_attempt_at and retry.attempts==1
+        retry.attempts=2;assert run_corroboration_job(db,retry,Transient())=="FAILED" and retry.next_attempt_at is None and retry.attempts==3
+        assert run_corroboration_job(db,terminal,Unsafe())=="FAILED" and terminal.next_attempt_at is None
+
 def test_diligence_case_has_type_specific_mandatory_checks():
     engine=create_engine("sqlite:///:memory:");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
     with factory() as db:

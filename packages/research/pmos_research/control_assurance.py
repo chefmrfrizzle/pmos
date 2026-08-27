@@ -8,7 +8,7 @@ from sqlalchemy import select
 from .audit_ledger import verify_ledger
 from .case_checks import evidence_sufficiency
 from .db import (
-    AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,Entity,
+    AdjudicationEvent,Claim,ClaimCheckRoutingCandidate,ClaimEvidence,ControlAssuranceRun,CorroborationJob,Entity,
     CheckResult,DiligenceCheckAdjudicationEvent,DiligenceCheckEvidence,ExportRequest,ExportRequestEvent,
     EvidencePassage,EvidenceReviewAssignment,EvidenceReviewAssignmentEvent,EvidenceReviewBatch,EvidenceReviewBatchItem,EvidenceReviewDecisionAuthorization,EvidenceReviewDecisionBinding,IdentifierAdjudicationEvent,IdentityCluster,IdentityMembership,IdentityReviewAssignment,IdentityReviewAssignmentEvent,IdentityReviewBatch,IdentityReviewBatchItem,IdentityReviewDecisionAuthorization,IdentityReviewDecisionBinding,JurisdictionReviewCase,JurisdictionReviewEvent,PrivateSaleGate,PrivateSaleGateEvent,RelationshipAdjudicationEvent,
     LegalIdentifier,RegistryIdentifierCandidate,RelationshipAssertion,RelationshipAssertionEvidence,RelationshipMentionCandidate,RelationshipMentionCandidateEvent,RelationshipMentionResolution,RelationshipMentionResolutionEvent,RelationshipMentionReviewAssignment,RelationshipMentionReviewAssignmentEvent,RelationshipMentionReviewBatch,RelationshipMentionReviewBatchItem,RelationshipMentionReviewDecisionBinding,RelationshipResearchCandidate,
@@ -112,6 +112,10 @@ def run_control_assurance(session)->dict:
     for candidate in retry_candidates:
         rows=grouped.get(candidate.id,[]);bad+=not rows or not rows[-1].retryable
     controls.append(_control("source_retrieval_attempt_integrity",len(attempts)+len(retry_candidates),bad))
+    corroboration_jobs=session.scalars(select(CorroborationJob)).all();bad=0
+    for job in corroboration_jobs:
+        bad+=job.attempts<0 or (job.status=="PENDING" and (job.attempts!=0 or job.next_attempt_at is not None)) or (job.status=="RETRY_REQUIRED" and (job.attempts not in {1,2} or job.next_attempt_at is None)) or (job.status not in {"PENDING","RETRY_REQUIRED"} and job.next_attempt_at is not None)
+    controls.append(_control("corroboration_retry_lifecycle",len(corroboration_jobs),bad))
 
     accepted=session.scalars(select(IdentityCluster).where(IdentityCluster.status=="ACCEPTED")).all();bad=0
     for cluster in accepted:

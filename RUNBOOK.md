@@ -10,6 +10,8 @@ Run allowlisted batch jobs with resource and environment isolation where possibl
 
 Run `python scripts/run_isolated_job.py universe-coverage` after registry expansion, corroboration, adjudication, or case completion. The command persists a content-hashed aggregate report and ledger anchor; it emits totals only. Authorized all-universe administrators may inspect the latest report at `GET /universe-coverage` with `coverage:read`. Treat `registered`, `identity_evidence_backed`, `diligence_case_open`, and `decision_ready` as distinct populations. Missing regions or zero readiness are remediation queues, not permission to invent institutions or weaken evidence thresholds.
 
+Corroboration transport failures and HTTP 429/5xx responses retry at bounded exponential intervals for at most three attempts. Unsafe targets, non-public DNS, response-size violations, robots denial, and exhausted retries remain terminal or review states. Do not manually reset them to inflate coverage.
+
 For a private import, set `PMOS_PRIVATE_ROOT` and `PMOS_DB_URL` to paths outside the repository, then run `python scripts/import_private.py --input-dir /external/private/imports`. Use a new database URL for schema revisions instead of overwriting an earlier datastore. The importer is idempotent by file hash, isolates source-file failures, and prints aggregate reconciliation only. Review every non-exact resolution before promotion.
 
 Import limits can only be adjusted within hard safety ceilings through `PMOS_IMPORT_MAX_FILE_BYTES`, `PMOS_IMPORT_MAX_ROWS`, `PMOS_IMPORT_MAX_COLUMNS`, `PMOS_IMPORT_MAX_CELL_CHARS`, `PMOS_IMPORT_MAX_TOTAL_CELLS`, and `PMOS_IMPORT_MAX_XLSX_UNCOMPRESSED`. Do not raise limits merely to force a malformed source through; quarantine and inspect it first.
