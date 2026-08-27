@@ -14,3 +14,9 @@ def test_review_batch_freezes_hashes_and_detects_manifest_tampering():
         candidate=_fixture(db);batch=freeze_review_batch(db,"reviewer","pensions",min_confidence=.8);db.commit();packet=build_batch_packet(db,batch.id)
         assert packet["manifest_valid"] is True and packet["item_count"]==1 and packet["items"][0]["passage_candidate_id"]==candidate.id
         item=db.query(EvidenceReviewBatchItem).filter_by(batch_id=batch.id).one();item.document_hash="0"*64;db.commit();assert build_batch_packet(db,batch.id)["manifest_valid"] is False
+
+def test_freeze_excludes_candidates_already_in_active_batch_and_is_idempotent():
+    engine=create_engine("sqlite://");Base.metadata.create_all(engine);factory=sessionmaker(bind=engine)
+    with factory() as db:
+        first_candidate=_fixture(db);first=freeze_review_batch(db,"reviewer","pensions",min_confidence=.8);assert freeze_review_batch(db,"reviewer","pensions",min_confidence=.8).id==first.id
+        source=db.get(ResearchSourceCandidate,first_candidate.source_candidate_id);document=db.get(SourceDocument,db.get(EvidencePassage,first_candidate.evidence_passage_id).document_id);text="Second exact evidence passage";passage=EvidencePassage(document_id=document.id,section="second",passage=text,passage_hash=hashlib.sha256(text.encode()).hexdigest());db.add(passage);db.flush();second_candidate=ResearchPassageCandidate(source_candidate_id=source.id,evidence_passage_id=passage.id,predicate="mandate",confidence=.9,extractor="test",status="HUMAN_REVIEW_REQUIRED");db.add(second_candidate);db.flush();second=freeze_review_batch(db,"reviewer","pensions",min_confidence=.8);packet=build_batch_packet(db,second.id);assert second.id!=first.id and packet["item_count"]==1 and packet["items"][0]["passage_candidate_id"]==second_candidate.id

@@ -15,7 +15,8 @@ def freeze_review_batch(session,actor:str,universe:str,status:str="HUMAN_REVIEW_
     status=status.upper();predicate=predicate.casefold() if predicate else None
     if status not in {"HUMAN_REVIEW_REQUIRED","DEFERRED","SUPPORT_PROPOSED","CONFLICT"} or not 0<=min_confidence<=1 or not 1<=limit<=100:raise EvidenceReviewBatchError("invalid review batch criteria")
     if not universe.strip():raise EvidenceReviewBatchError("universe is required")
-    query=select(ResearchPassageCandidate).join(ResearchSourceCandidate,ResearchSourceCandidate.id==ResearchPassageCandidate.source_candidate_id).join(Entity,Entity.id==ResearchSourceCandidate.entity_id).where(Entity.universe==universe,ResearchPassageCandidate.status==status,ResearchPassageCandidate.confidence>=min_confidence)
+    active_items=select(EvidenceReviewBatchItem.passage_candidate_id).join(EvidenceReviewBatch,EvidenceReviewBatch.id==EvidenceReviewBatchItem.batch_id).where(EvidenceReviewBatch.status=="FROZEN",EvidenceReviewBatchItem.candidate_status==status)
+    query=select(ResearchPassageCandidate).join(ResearchSourceCandidate,ResearchSourceCandidate.id==ResearchPassageCandidate.source_candidate_id).join(Entity,Entity.id==ResearchSourceCandidate.entity_id).where(Entity.universe==universe,ResearchPassageCandidate.status==status,ResearchPassageCandidate.confidence>=min_confidence,ResearchPassageCandidate.id.not_in(active_items))
     if predicate:query=query.where(ResearchPassageCandidate.predicate==predicate)
     candidates=session.scalars(query.order_by(ResearchPassageCandidate.confidence.desc(),ResearchPassageCandidate.id).limit(limit)).all();items=[]
     for candidate in candidates:
@@ -23,7 +24,12 @@ def freeze_review_batch(session,actor:str,universe:str,status:str="HUMAN_REVIEW_
         if not source or not passage or not document or document.entity_id!=source.entity_id:raise EvidenceReviewBatchError("candidate evidence chain is incomplete")
         controls=evidence_controls(session,candidate,source,passage,document);state="ELIGIBLE" if controls["support_eligible"] else "CONFLICT" if controls["material_open_conflict"] else "STALE" if controls["freshness"]["state"]=="STALE" else "BLOCKED"
         items.append({"passage_candidate_id":candidate.id,"candidate_status":candidate.status,"predicate":candidate.predicate,"passage_hash":passage.passage_hash,"document_hash":document.content_hash,"evidence_state":state})
-    criteria={"universe":universe,"status":status,"predicate":predicate,"min_confidence":min_confidence,"limit":limit};manifest={"criteria":criteria,"items":items};digest=hashlib.sha256(_canonical(manifest).encode()).hexdigest()
+    criteria={"universe":universe,"status":status,"predicate":predicate,"min_confidence":min_confidence,"limit":limit}
+    if not items:
+        existing=session.scalar(select(EvidenceReviewBatch).where(EvidenceReviewBatch.status=="FROZEN",EvidenceReviewBatch.criteria_json==_canonical(criteria)).order_by(EvidenceReviewBatch.id.desc()))
+        if existing:return existing
+        raise EvidenceReviewBatchError("no unbatched passage candidates match the review criteria")
+    manifest={"criteria":criteria,"items":items};digest=hashlib.sha256(_canonical(manifest).encode()).hexdigest()
     existing=session.scalar(select(EvidenceReviewBatch).where(EvidenceReviewBatch.manifest_hash==digest))
     if existing:return existing
     batch=EvidenceReviewBatch(criteria_json=_canonical(criteria),manifest_hash=digest,item_count=len(items),created_by=actor);session.add(batch);session.flush()
